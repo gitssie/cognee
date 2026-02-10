@@ -11,12 +11,9 @@ from starlette.status import WS_1000_NORMAL_CLOSURE, WS_1008_POLICY_VIOLATION
 from cognee.api.DTO import InDTO
 from cognee.modules.pipelines.methods import get_pipeline_run
 from cognee.modules.users.models import User
-from cognee.modules.users.methods import get_authenticated_user
-from cognee.modules.users.get_user_db import get_user_db_context
+from cognee.modules.users.methods import get_authenticated_user, get_websocket_user
 from cognee.modules.graph.methods import get_formatted_graph_data
-from cognee.modules.users.get_user_manager import get_user_manager_context
 from cognee.infrastructure.databases.relational import get_relational_engine
-from cognee.modules.users.authentication.default.default_jwt_strategy import DefaultJWTStrategy
 from cognee.modules.pipelines.models.PipelineRunInfo import (
     PipelineRunCompleted,
     PipelineRunInfo,
@@ -167,24 +164,13 @@ def get_cognify_router() -> APIRouter:
     async def subscribe_to_cognify_info(websocket: WebSocket, pipeline_run_id: str):
         await websocket.accept()
 
-        access_token = websocket.cookies.get(os.getenv("AUTH_TOKEN_COOKIE_NAME", "auth_token"))
-
+        # Use the unified WebSocket authentication helper
         try:
-            secret = os.getenv("FASTAPI_USERS_JWT_SECRET", "super_secret")
-
-            strategy = DefaultJWTStrategy(secret, lifetime_seconds=3600)
-
-            db_engine = get_relational_engine()
-
-            async with db_engine.get_async_session() as session:
-                async with get_user_db_context(session) as user_db:
-                    async with get_user_manager_context(user_db) as user_manager:
-                        user = await get_authenticated_user(
-                            cookie=access_token,
-                            strategy_cookie=strategy,
-                            user_manager=user_manager,
-                            bearer=None,
-                        )
+            user = await get_websocket_user(websocket)
+            if user is None:
+                logger.error("Authentication failed: Invalid or missing token")
+                await websocket.close(code=WS_1008_POLICY_VIOLATION, reason="Unauthorized")
+                return
         except Exception as error:
             logger.error(f"Authentication failed: {str(error)}")
             await websocket.close(code=WS_1008_POLICY_VIOLATION, reason="Unauthorized")

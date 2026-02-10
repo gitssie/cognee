@@ -106,4 +106,70 @@ def get_ontology_router() -> APIRouter:
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": str(e)})
 
+    @router.delete("/{ontology_key}", response_model=dict)
+    async def delete_ontology(
+        ontology_key: str,
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Delete an ontology by key.
+        """
+        try:
+            ontology_service.delete_ontology(ontology_key, user)
+            return {"message": f"Ontology '{ontology_key}' deleted successfully"}
+        except ValueError as e:
+            return JSONResponse(status_code=404, content={"error": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    @router.get("/{ontology_key}/content", response_model=dict)
+    async def get_ontology_content(
+        ontology_key: str,
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Get ontology content by key.
+        """
+        try:
+            contents = ontology_service.get_ontology_contents([ontology_key], user)
+            return {"ontology_key": ontology_key, "content": contents[0]}
+        except ValueError as e:
+            return JSONResponse(status_code=404, content={"error": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    @router.post("/bulk", response_model=dict)
+    async def bulk_upload_ontologies(
+        ontology_keys: List[str] = Form(...),
+        ontology_files: List[UploadFile] = File(...),
+        descriptions: Optional[List[str]] = Form(None),
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Bulk upload ontologies.
+        """
+        try:
+            results = await ontology_service.upload_ontologies(
+                ontology_key=ontology_keys,
+                files=ontology_files,
+                user=user,
+                descriptions=descriptions,
+            )
+            return {
+                "uploaded_ontologies": [
+                    {
+                        "ontology_key": result.ontology_key,
+                        "filename": result.filename,
+                        "size_bytes": result.size_bytes,
+                        "uploaded_at": result.uploaded_at,
+                        "description": result.description,
+                    }
+                    for result in results
+                ]
+            }
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
     return router

@@ -8,3 +8,4 @@ from .get_authenticated_user import (
     get_authenticated_user,
     REQUIRE_AUTHENTICATION,
 )
+from .get_websocket_user import get_websocket_user

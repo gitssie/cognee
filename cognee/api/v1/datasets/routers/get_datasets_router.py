@@ -53,6 +53,7 @@ class DataDTO(OutDTO):
     mime_type: str
     raw_data_location: str
     dataset_id: UUID
+    pipeline_status: Optional[dict] = None  # Processing status for this data item
 
 
 class GraphNodeDTO(OutDTO):
@@ -412,6 +413,126 @@ def get_datasets_router() -> APIRouter:
 
             return datasets_statuses
         except Exception as error:
+            return JSONResponse(status_code=409, content={"error": str(error)})
+
+    @router.get("/status/details")
+    async def get_dataset_status_details(
+        datasets: Annotated[List[UUID], Query(alias="dataset")] = [],
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Get detailed processing status of datasets including timestamps.
+
+        This endpoint retrieves detailed processing status including the timestamp
+        of the last status update. This allows clients to detect stale/stuck
+        pipelines that may have crashed without updating their status.
+
+        ## Query Parameters
+        - **dataset** (List[UUID]): List of dataset UUIDs to check status for
+
+        ## Response
+        Returns a dictionary mapping dataset IDs to status details:
+        - **status**: Current pipeline status enum
+        - **created_at**: ISO timestamp of the last status update
+        - **pipeline_run_id**: UUID of the pipeline run (if available)
+
+        ## Usage for Stale Detection
+        Clients can compare `created_at` with current time. If a pipeline is in
+        INITIATED or STARTED state for more than a configurable timeout (e.g., 30 min),
+        it may be considered stale and the user should be offered a reset option.
+
+        ## Error Codes
+        - **409 Conflict**: Error retrieving status information
+        """
+        send_telemetry(
+            "Datasets API Endpoint Invoked",
+            user.id,
+            additional_properties={
+                "endpoint": "GET /v1/datasets/status/details",
+                "datasets": [str(dataset_id) for dataset_id in datasets],
+                "cognee_version": cognee_version,
+            },
+        )
+
+        from cognee.modules.pipelines.operations.get_pipeline_status import get_pipeline_status
+
+        try:
+            # Verify user has permission to read dataset
+            authorized_datasets = await get_authorized_existing_datasets(datasets, "read", user)
+
+            datasets_statuses = await get_pipeline_status(
+                [dataset.id for dataset in authorized_datasets],
+                pipeline_name="cognify_pipeline",
+                include_details=True,
+            )
+
+            # Convert to JSON-serializable format
+            result = {}
+            for dataset_id, info in datasets_statuses.items():
+                result[dataset_id] = {
+                    "status": info.status.value
+                    if hasattr(info.status, "value")
+                    else str(info.status),
+                    "created_at": info.created_at.isoformat(),
+                    "pipeline_run_id": str(info.pipeline_run_id) if info.pipeline_run_id else None,
+                }
+
+            return result
+        except Exception as error:
+            logger.error(f"Error retrieving dataset status details: {str(error)}")
+            return JSONResponse(status_code=409, content={"error": str(error)})
+
+    @router.post("/status/reset")
+    async def reset_dataset_status(
+        datasets: Annotated[List[UUID], Query(alias="dataset")] = [],
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Reset the processing status of stale/stuck datasets.
+
+        This endpoint allows users to reset the status of datasets that may be
+        stuck in INITIATED or STARTED state due to pipeline crashes or errors.
+        After reset, the dataset can be re-processed with Cognify.
+
+        ## Query Parameters
+        - **dataset** (List[UUID]): List of dataset UUIDs to reset status for
+
+        ## Response
+        Returns a dictionary with reset results:
+        - **reset**: List of dataset IDs that were successfully reset
+        - **skipped**: List of dataset IDs that were skipped (already completed/errored)
+
+        ## Error Codes
+        - **409 Conflict**: Error resetting status
+        """
+        send_telemetry(
+            "Datasets API Endpoint Invoked",
+            user.id,
+            additional_properties={
+                "endpoint": "POST /v1/datasets/status/reset",
+                "datasets": [str(dataset_id) for dataset_id in datasets],
+                "cognee_version": cognee_version,
+            },
+        )
+
+        from cognee.modules.pipelines.layers.reset_dataset_pipeline_run_status import (
+            reset_dataset_pipeline_run_status,
+        )
+
+        try:
+            # Verify user has permission to write to dataset
+            authorized_datasets = await get_authorized_existing_datasets(datasets, "write", user)
+
+            reset_ids = []
+            for dataset in authorized_datasets:
+                await reset_dataset_pipeline_run_status(
+                    dataset.id, user, pipeline_names=["cognify_pipeline"]
+                )
+                reset_ids.append(str(dataset.id))
+
+            return {"reset": reset_ids, "message": f"Reset {len(reset_ids)} dataset(s)"}
+        except Exception as error:
+            logger.error(f"Error resetting dataset status: {str(error)}")
             return JSONResponse(status_code=409, content={"error": str(error)})
 
     @router.get("/{dataset_id}/data/{data_id}/raw", response_class=FileResponse)
