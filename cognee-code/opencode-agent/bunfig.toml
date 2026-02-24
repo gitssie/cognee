@@ -1,0 +1,3 @@
+# Bun runtime configuration
+# https://bun.sh/docs/runtime/configuration
+smol = true
