@@ -4,10 +4,10 @@
     <div class="row no-wrap full-height">
       <!-- Left: Dataset List (Fixed Width) -->
       <div class="dataset-sidebar">
-        <DatasetList 
-          :datasets="datasets" 
+        <DatasetList
+          :datasets="datasets"
           :selected-id="currentDataset?.id"
-          :loading="loading" 
+          :loading="loading"
           @create="showCreateDialog = true"
           @delete="deleteDataset"
           @select="selectDataset"
@@ -33,13 +33,13 @@
             @reset-status="handleResetStatus"
           />
         </div>
-        
+
         <!-- Empty Selection State -->
         <div v-else class="full-height row flex-center bg-grey-1 text-grey-6 column">
           <q-icon name="library_books" size="80px" color="grey-4" />
           <div class="text-h5 q-mt-md">Select a Knowledge Base</div>
           <div class="text-subtitle1 q-mb-lg">Choose from the left sidebar, or create a new one</div>
-          
+
           <q-card flat bordered class="q-pa-md" style="max-width: 400px;">
             <div class="text-subtitle2 text-grey-8 q-mb-sm">Quick Start:</div>
             <div class="column q-gutter-sm">
@@ -47,7 +47,7 @@
               <div class="text-caption text-grey-6 text-center">Then select it to add files, text or URLs</div>
             </div>
           </q-card>
-          
+
           <div class="text-caption text-grey-5 q-mt-lg">
             <q-icon name="info" size="xs" class="q-mr-xs" />
             After creating a Knowledge Base, click "Add Content" to upload files
@@ -56,9 +56,10 @@
       </div>
     </div>
 
-    <CreateDatasetDialog 
+    <CreateDatasetDialog
       ref="createDatasetDialogRef"
       v-model="showCreateDialog"
+      :loading="creatingDataset"
       @create="createDataset"
     />
 
@@ -87,11 +88,10 @@
     <!-- Cognify Progress Dialog - can be dismissed, processing continues in background -->
     <q-dialog v-model="isCognifying">
       <q-card style="min-width: 350px">
-        <q-card-section class="row items-center">
-          <div class="text-h6">Building Knowledge Graph</div>
-          <q-space />
+        <q-toolbar>
+          <q-toolbar-title>Building Knowledge Graph</q-toolbar-title>
           <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
+        </q-toolbar>
 
         <q-card-section class="q-pt-none">
           <div class="column flex-center q-pa-md">
@@ -141,12 +141,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue';
 import { useQuasar } from 'quasar';
-import { KnowledgeService, DatasetStatus, PipelineRunStatus } from 'src/services/knowledge';
-import type { Dataset, DataItem, DatasetWithStatus } from 'src/services/knowledge';
+import type { EventBus } from 'quasar';
+import { KnowledgeService, DatasetStatus } from 'src/services/knowledge';
+import type { Dataset, DataItem, DatasetWithStatus, PipelineRunStatus } from 'src/services/knowledge';
 import { CognifyService } from 'src/services/cognify';
 import type { PipelineRunInfo } from 'src/services/cognify';
+import type { PipelineEventPayload } from 'src/services/sse';
 import DatasetList from 'components/knowledge/DatasetList.vue';
 import DataList from 'components/knowledge/DataList.vue';
 import CreateDatasetDialog from 'components/knowledge/CreateDatasetDialog.vue';
@@ -155,6 +157,7 @@ import ShareDatasetDialog from 'components/knowledge/ShareDatasetDialog.vue';
 import FilePreviewDialog from 'components/knowledge/FilePreviewDialog.vue';
 
 const $q = useQuasar();
+const bus = inject<EventBus>('sseBus')!;
 
 // Dialog refs for controlled closing after successful operations
 const createDatasetDialogRef = ref<InstanceType<typeof CreateDatasetDialog> | null>(null);
@@ -165,6 +168,7 @@ const currentDataset = ref<DatasetWithStatus | null>(null);
 const dataItems = ref<DataItem[]>([]);
 const loading = ref(false);
 const dataLoading = ref(false);
+const creatingDataset = ref(false);
 const showCreateDialog = ref(false);
 const showAddDataDialog = ref(false);
 const showShareDialog = ref(false);
@@ -178,12 +182,19 @@ const previewContent = ref<Blob | null>(null);
 const isCognifying = ref(false);
 const cognifyStatus = ref('');
 
-// Status polling interval
-let statusPollInterval: ReturnType<typeof setInterval> | null = null;
+// Pipeline SSE handlers — keyed by the global bus event names
+let onPipelineUpdate: ((payload: PipelineEventPayload) => void) | null = null;
+let onPipelineDone: ((payload: PipelineEventPayload) => void) | null = null;
+let onPipelineError: ((payload: PipelineEventPayload) => void) | null = null;
+
+// Track the active cognify run so we can filter pipeline events
+let activeCognifyRunId: string | null = null;
 
 // Computed: current dataset status
+// Return PENDING while data is loading to avoid flashing the previous dataset's status
 const currentDatasetStatus = computed(() => {
   if (!currentDataset.value) return DatasetStatus.EMPTY;
+  if (dataLoading.value) return DatasetStatus.PENDING;
   return currentDataset.value.status || DatasetStatus.PENDING;
 });
 
@@ -192,7 +203,7 @@ async function loadDatasets() {
     loading.value = true;
     const rawDatasets = await KnowledgeService.getDatasets();
     datasets.value = await KnowledgeService.enrichDatasetsWithStatus(rawDatasets);
-    
+
     // Update current dataset status if selected
     if (currentDataset.value) {
       const updated = datasets.value.find(d => d.id === currentDataset.value?.id);
@@ -209,16 +220,16 @@ async function loadDatasets() {
 
 async function refreshDatasetStatus() {
   if (datasets.value.length === 0) return;
-  
+
   try {
     const statusResponse = await KnowledgeService.getDatasetStatusDetails(datasets.value.map(d => d.id));
-    
+
     // Update status for each dataset
     datasets.value = datasets.value.map(dataset => {
       const statusInfo = statusResponse[dataset.id];
       const pipelineStatus = statusInfo?.status as PipelineRunStatus | undefined;
       const statusUpdatedAt = statusInfo?.created_at;
-      const newStatus = KnowledgeService.getSimplifiedStatus(pipelineStatus);
+      const newStatus = pipelineStatus ? KnowledgeService.getSimplifiedStatus(pipelineStatus) : DatasetStatus.EMPTY;
       const result: DatasetWithStatus = {
         ...dataset,
         status: newStatus,
@@ -231,7 +242,7 @@ async function refreshDatasetStatus() {
       }
       return result;
     });
-    
+
     // Update current dataset if selected
     if (currentDataset.value) {
       const updated = datasets.value.find(d => d.id === currentDataset.value?.id);
@@ -244,32 +255,99 @@ async function refreshDatasetStatus() {
   }
 }
 
-function startStatusPolling() {
-  if (statusPollInterval) return;
-  statusPollInterval = setInterval(() => {
-    void refreshDatasetStatus();
-  }, 5000); // Poll every 5 seconds
+function startPipelineListeners() {
+  stopPipelineListeners();
+
+  onPipelineUpdate = (payload: PipelineEventPayload) => {
+    // Update dataset status for the relevant dataset
+    if (payload.dataset_id) {
+      datasets.value = datasets.value.map(dataset => {
+        if (dataset.id !== payload.dataset_id) return dataset;
+        const pipelineStatus = payload.status as PipelineRunStatus;
+        const result: DatasetWithStatus = {
+          ...dataset,
+          status: KnowledgeService.getSimplifiedStatus(pipelineStatus),
+          pipelineStatus,
+        };
+        return result;
+      });
+      if (currentDataset.value?.id === payload.dataset_id) {
+        const updated = datasets.value.find(d => d.id === payload.dataset_id);
+        if (updated) currentDataset.value = updated;
+      }
+    }
+    // Update cognify dialog status if this is our active run
+    if (activeCognifyRunId && payload.pipeline_run_id === activeCognifyRunId) {
+      cognifyStatus.value = formatStatus(payload.status);
+    }
+  };
+  bus.on('pipeline:update', onPipelineUpdate);
+
+  onPipelineDone = (payload: PipelineEventPayload) => {
+    if (payload.dataset_id) {
+      datasets.value = datasets.value.map(dataset => {
+        if (dataset.id !== payload.dataset_id) return dataset;
+        const pipelineStatus = payload.status as PipelineRunStatus;
+        return {
+          ...dataset,
+          status: KnowledgeService.getSimplifiedStatus(pipelineStatus),
+          pipelineStatus,
+        };
+      });
+      if (currentDataset.value?.id === payload.dataset_id) {
+        const updated = datasets.value.find(d => d.id === payload.dataset_id);
+        if (updated) currentDataset.value = updated;
+      }
+      // Always refresh status and data items when SSE signals completion
+      void refreshDatasetStatus();
+      if (currentDataset.value?.id === payload.dataset_id) {
+        void loadData(payload.dataset_id);
+      }
+    }
+    if (activeCognifyRunId && payload.pipeline_run_id === activeCognifyRunId) {
+      activeCognifyRunId = null;
+      isCognifying.value = false;
+      $q.notify({ type: 'positive', message: 'Knowledge graph built successfully!' });
+    }
+  };
+  bus.on('pipeline:done', onPipelineDone);
+
+  onPipelineError = (payload: PipelineEventPayload) => {
+    if (payload.dataset_id) {
+      datasets.value = datasets.value.map(dataset => {
+        if (dataset.id !== payload.dataset_id) return dataset;
+        const pipelineStatus = payload.status as PipelineRunStatus;
+        return {
+          ...dataset,
+          status: KnowledgeService.getSimplifiedStatus(pipelineStatus),
+          pipelineStatus,
+        };
+      });
+      if (currentDataset.value?.id === payload.dataset_id) {
+        const updated = datasets.value.find(d => d.id === payload.dataset_id);
+        if (updated) currentDataset.value = updated;
+      }
+      // Always refresh status on error
+      void refreshDatasetStatus();
+    }
+    if (activeCognifyRunId && payload.pipeline_run_id === activeCognifyRunId) {
+      activeCognifyRunId = null;
+      isCognifying.value = false;
+      $q.notify({ type: 'negative', message: 'Cognify failed.' });
+    }
+  };
+  bus.on('pipeline:error', onPipelineError);
 }
 
-function stopStatusPolling() {
-  if (statusPollInterval) {
-    clearInterval(statusPollInterval);
-    statusPollInterval = null;
-  }
+function stopPipelineListeners() {
+  if (onPipelineUpdate) { bus.off('pipeline:update', onPipelineUpdate); onPipelineUpdate = null; }
+  if (onPipelineDone)   { bus.off('pipeline:done',   onPipelineDone);   onPipelineDone = null; }
+  if (onPipelineError)  { bus.off('pipeline:error',  onPipelineError);  onPipelineError = null; }
 }
-
-// Watch for processing datasets to start/stop polling
-watch(() => datasets.value.some(d => d.status === DatasetStatus.PROCESSING), (hasProcessing) => {
-  if (hasProcessing) {
-    startStatusPolling();
-  } else {
-    stopStatusPolling();
-  }
-});
 
 async function createDataset(name: string) {
   try {
-    loading.value = true;
+    creatingDataset.value = true;
     const newDs = await KnowledgeService.createDataset(name);
     await loadDatasets();
     // Find the enriched version
@@ -282,7 +360,7 @@ async function createDataset(name: string) {
   } catch {
     $q.notify({ type: 'negative', message: 'Failed to create dataset' });
   } finally {
-    loading.value = false;
+    creatingDataset.value = false;
   }
 }
 
@@ -316,6 +394,8 @@ async function performDeleteDataset(id: string) {
 async function selectDataset(dataset: Dataset | DatasetWithStatus) {
   // Convert to DatasetWithStatus if needed
   const enriched = datasets.value.find(d => d.id === dataset.id);
+  // Clear stale data immediately to prevent showing the previous dataset's items
+  dataItems.value = [];
   currentDataset.value = enriched || { ...dataset, status: DatasetStatus.PENDING };
   await loadData(dataset.id);
 }
@@ -441,7 +521,7 @@ async function previewData(item: DataItem) {
   previewItem.value = item;
   previewContent.value = null;
   showPreviewDialog.value = true;
-  
+
   try {
     const blob = await KnowledgeService.downloadRawData(currentDataset.value.id, item.id);
     previewContent.value = blob;
@@ -458,15 +538,15 @@ function downloadPreviewItem() {
 
 async function handleResetStatus() {
   if (!currentDataset.value) return;
-  
+
   try {
     dataLoading.value = true;
     await KnowledgeService.resetDatasetStatus([currentDataset.value.id]);
     $q.notify({ type: 'positive', message: 'Status reset. You can now retry processing.' });
-    
+
     // Refresh status
     await refreshDatasetStatus();
-    
+
     // Optionally auto-start cognify after reset
     void handleCognify();
   } catch {
@@ -478,22 +558,22 @@ async function handleResetStatus() {
 
 async function handleCognify() {
   if (!currentDataset.value) return;
-  
+
   try {
     isCognifying.value = true;
     cognifyStatus.value = 'Starting...';
-    
+
     // Don't update local status here - let the backend status be the source of truth
     // The WebSocket will send real-time status updates
-    
+
     // In background mode, response is list of PipelineRunInfo
     const result = await CognifyService.cognify(currentDataset.value.id);
-    
+
     if (result && result.length > 0 && result[0]) {
       // In background mode, result is a list
       const info = result[0];
       const runId = info.pipeline_run_id;
-      
+
       // Check if pipeline already completed (all files were already processed)
       if (info.status === 'PipelineRunCompleted') {
         $q.notify({ type: 'info', message: 'All data already processed.' });
@@ -501,7 +581,7 @@ async function handleCognify() {
         void refreshDatasetStatus();
         void loadData(currentDataset.value.id);
       } else {
-        connectToCognifyStream(runId);
+        activeCognifyRunId = runId;
       }
     } else if (typeof result === 'object' && result !== null) {
        // Just in case it returns the dict format (datasetId -> info)
@@ -509,7 +589,7 @@ async function handleCognify() {
        if (values.length > 0 && values[0]) {
            const info = values[0];
            const runId = info.pipeline_run_id;
-           
+
            // Check if pipeline already completed
            if (info.status === 'PipelineRunCompleted') {
              $q.notify({ type: 'info', message: 'All data already processed.' });
@@ -517,7 +597,7 @@ async function handleCognify() {
              void refreshDatasetStatus();
              void loadData(currentDataset.value.id);
            } else {
-             connectToCognifyStream(runId);
+             activeCognifyRunId = runId;
            }
        } else {
            $q.notify({ type: 'warning', message: 'No pipeline info returned.' });
@@ -534,63 +614,6 @@ async function handleCognify() {
   }
 }
 
-function connectToCognifyStream(runId: string) {
-  const wsUrl = CognifyService.getWebSocketUrl(runId);
-  const socket = new WebSocket(wsUrl);
-  
-  socket.onopen = () => {
-    cognifyStatus.value = 'Processing...';
-  };
-  
-  socket.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data) as { status?: string };
-      // data structure: { pipeline_run_id, status, payload }
-      if (data.status) {
-          cognifyStatus.value = formatStatus(data.status);
-          
-          // Update local dataset status in real-time based on WebSocket message
-          if (currentDataset.value) {
-            const pipelineStatus = data.status as PipelineRunStatus;
-            const newSimplifiedStatus = KnowledgeService.getSimplifiedStatus(pipelineStatus);
-            currentDataset.value = {
-              ...currentDataset.value,
-              status: newSimplifiedStatus,
-              pipelineStatus: pipelineStatus,
-            };
-          }
-          
-          // Close dialog and refresh data when pipeline completes or errors
-          if (data.status === PipelineRunStatus.DATASET_PROCESSING_COMPLETED as string ||
-              data.status === PipelineRunStatus.DATASET_PROCESSING_ERRORED as string) {
-            void refreshDatasetStatus();
-            if (currentDataset.value) {
-              void loadData(currentDataset.value.id); // Also refresh data items to show updated file statuses
-            }
-            isCognifying.value = false;
-          }
-      }
-    } catch (e) {
-      console.error('Error parsing WS message', e);
-    }
-  };
-  
-  socket.onclose = (event) => {
-      isCognifying.value = false;
-      if (event.code === 1000) {
-          $q.notify({ type: 'positive', message: 'Knowledge graph built successfully!' });
-          // Refresh status (in case onmessage didn't catch it)
-          void refreshDatasetStatus();
-      }
-  };
-  
-  socket.onerror = (error) => {
-      console.error('WebSocket Error:', error);
-      $q.notify({ type: 'negative', message: 'Cognify connection error.' });
-      isCognifying.value = false;
-  };
-}
-
 function formatStatus(status: string): string {
   // Convert DATASET_PROCESSING_STARTED to "Processing Started"
   return status
@@ -601,11 +624,12 @@ function formatStatus(status: string): string {
 }
 
 onMounted(() => {
+  startPipelineListeners();
   void loadDatasets();
 });
 
 onUnmounted(() => {
-  stopStatusPolling();
+  stopPipelineListeners();
 });
 </script>
 

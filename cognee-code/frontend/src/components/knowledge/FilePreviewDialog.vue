@@ -1,14 +1,13 @@
 <template>
   <q-dialog v-model="isOpen">
-    <q-card style="width: 800px; max-width: 90vw; max-height: 80vh;" class="column no-wrap">
+    <q-card style="width: 800px; max-width: 90vw; height: 70vh; max-height: 80vh;" class="column no-wrap">
       <!-- Header -->
-      <q-card-section class="row items-center q-pb-none bg-grey-1">
-        <q-icon :name="getIcon(mimeType)" :color="getIconColor(mimeType)" size="md" class="q-mr-sm" />
-        <div class="text-h6 ellipsis" style="max-width: 60%;">{{ fileName }}</div>
-        <q-space />
+      <q-toolbar class="bg-grey-1">
+        <q-icon :name="getIcon(mimeType)" :color="getIconColor(mimeType)" size="sm" class="q-mr-sm" />
+        <q-toolbar-title>{{ fileName }}</q-toolbar-title>
         <q-btn flat round dense icon="download" @click="$emit('download')" />
         <q-btn flat round dense icon="close" v-close-popup />
-      </q-card-section>
+      </q-toolbar>
 
       <q-separator />
 

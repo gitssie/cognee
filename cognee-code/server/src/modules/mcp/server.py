@@ -170,7 +170,12 @@ async def search(
 
     stype = search_type.upper()
     if stype in ("GRAPH_COMPLETION", "RAG_COMPLETION"):
-        text = str(results[0]) if results else ""
+        # Extract only the search result text, omitting dataset metadata
+        if results:
+            first = results[0]
+            text = first.get("search_result", str(first)) if isinstance(first, dict) else str(first)
+        else:
+            text = ""
     elif stype == "CODE":
         text = json.dumps(results, cls=JSONEncoder)
     else:

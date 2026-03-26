@@ -22,7 +22,7 @@ export const CognifyService = {
     return response.data;
   },
 
-  getWebSocketUrl(pipelineRunId: string): string {
-    return `ws://localhost:8000/api/v1/cognify/subscribe/${pipelineRunId}`;
+  getSseUrl(pipelineRunId: string): string {
+    return `http://localhost:8000/api/v1/cognify/stream/${pipelineRunId}`;
   }
 };

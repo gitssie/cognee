@@ -1,4 +1,3 @@
-import os
 import asyncio
 from uuid import UUID
 from pydantic import Field
@@ -13,7 +12,8 @@ from cognee.modules.pipelines.methods import get_pipeline_run
 from cognee.modules.users.models import User
 from cognee.modules.users.methods import get_authenticated_user, get_websocket_user
 from cognee.modules.graph.methods import get_formatted_graph_data
-from cognee.infrastructure.databases.relational import get_relational_engine
+from cognee.shared.data_models import KnowledgeGraph
+from cognee.shared.graph_model_utils import graph_schema_to_graph_model
 from cognee.modules.pipelines.models.PipelineRunInfo import (
     PipelineRunCompleted,
     PipelineRunInfo,
@@ -36,6 +36,7 @@ class CognifyPayloadDTO(InDTO):
     datasets: Optional[List[str]] = Field(default=None)
     dataset_ids: Optional[List[UUID]] = Field(default=None, examples=[[]])
     run_in_background: Optional[bool] = Field(default=False)
+    graph_model: Optional[dict] = Field(default=None, examples=[{}])
     custom_prompt: Optional[str] = Field(
         default="", description="Custom prompt for entity extraction and graph generation"
     )
@@ -144,9 +145,16 @@ def get_cognify_router() -> APIRouter:
                     }
                 }
 
+            if not payload.graph_model:
+                graph_model = KnowledgeGraph
+            else:
+                # If a custom graph model is provided, convert it from dict to a Pydantic model class
+                graph_model = graph_schema_to_graph_model(payload.graph_model)
+
             cognify_run = await cognee_cognify(
                 datasets,
                 user,
+                graph_model=graph_model,
                 config=config_to_use,
                 run_in_background=payload.run_in_background,
                 custom_prompt=payload.custom_prompt,

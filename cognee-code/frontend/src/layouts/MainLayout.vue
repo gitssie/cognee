@@ -95,16 +95,16 @@
         </q-item>
 
         <q-item
-          to="/rules"
+          to="/projects"
           active-class="bg-primary text-white shadow-md"
           clickable
           v-ripple
           class="q-my-xs q-mx-sm rounded-borders transition-colors"
         >
           <q-item-section avatar>
-            <q-icon name="gavel" />
+            <q-icon name="folder_special" />
           </q-item-section>
-          <q-item-section> Code Rules </q-item-section>
+          <q-item-section> Projects </q-item-section>
           <q-item-section side>
             <q-badge color="grey-8" label="M3" outline />
           </q-item-section>

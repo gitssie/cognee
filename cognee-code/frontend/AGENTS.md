@@ -120,6 +120,29 @@ Format: `q-{type}{direction}-{size}`
 - **Icons:** Use the `icon` prop with Material Icons names (e.g., `icon="search"`).
 - **Lists:** Use `<q-list>`, `<q-item>`, `<q-item-section>` for structured lists.
 
+### 5.1 Toolbar / Card Header Convention
+
+**Always use `<q-toolbar>` for panel and dialog headers.** Never use `<q-card-section>` or a plain `<div>` as a header row.
+
+```html
+<!-- CORRECT: q-toolbar for headers -->
+<q-toolbar class="bg-grey-1">
+  <q-btn flat round dense icon="arrow_back" />
+  <q-toolbar-title>Page Title</q-toolbar-title>
+  <q-btn flat round dense icon="more_vert" />
+</q-toolbar>
+
+<!-- WRONG: manual flex div or q-card-section as header -->
+<div class="row items-center justify-between q-pa-md">...</div>
+<q-card-section class="row items-center">...</q-card-section>
+```
+
+Rules:
+- `q-toolbar-title` takes up all remaining space automatically (flex: 1) — do **not** set `max-width` or manual width on it.
+- Put action buttons directly inside `q-toolbar` after `q-toolbar-title`.
+- Apply background color on `q-toolbar` itself (e.g. `class="bg-grey-1"`).
+- For dialogs, pair with `q-separator` below the toolbar.
+
 ## 6. Directory Structure & Roles
 
 - `src/pages/`: **Views**. Should handle route-specific logic and data fetching.

@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cognee/opencode-memory-plugin": "link:@cognee/opencode-memory-plugin",
     "@opencode-ai/plugin": "^1.2.10",
     "@opencode-ai/sdk": "latest",
     "zod": "^4.3.6"

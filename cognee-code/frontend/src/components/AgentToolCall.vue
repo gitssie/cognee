@@ -66,7 +66,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import type { ToolPart } from '@opencode-ai/sdk';
+import type { ToolPart } from '@opencode-ai/sdk/v2';
 
 interface Props {
   part: ToolPart;

@@ -1,21 +1,26 @@
 <template>
-  <div class="column full-height q-pa-md bg-grey-2">
+  <div class="column no-wrap full-height bg-grey-2">
     <!-- Toolbar -->
-    <div class="row items-center justify-between q-mb-md">
+    <q-toolbar class="bg-grey-2 q-pa-md q-pb-none" style="height: auto; flex-shrink: 0;">
       <div>
         <div class="text-h5 text-weight-bold row items-center">
           {{ datasetName }}
-          <!-- Dataset Status Badge -->
+          <!-- Dataset Status Badge — hide during loading to avoid flash -->
           <q-badge 
-            v-if="datasetStatus && datasetStatus !== 'empty'"
+            v-if="!loading && datasetStatus && datasetStatus !== 'empty'"
             :color="getStatusColor(datasetStatus)" 
             :label="getStatusLabel(datasetStatus)"
             class="q-ml-sm"
             rounded
           />
+          <q-skeleton v-if="loading" type="QBadge" class="q-ml-sm" />
         </div>
-        <div class="text-caption text-grey-8">{{ dataItems.length }} items</div>
+        <div class="text-caption text-grey-8">
+          <span v-if="!loading">{{ dataItems.length }} items</span>
+          <q-skeleton v-else type="text" width="60px" />
+        </div>
       </div>
+      <q-space />
       <div class="row q-gutter-sm">
         <q-input dense outlined v-model="filter" placeholder="Filter files..." bg-color="white">
           <template v-slot:prepend>
@@ -37,13 +42,13 @@
         <q-btn color="warning" icon="share" label="Share" @click="$emit('share')" unelevated text-color="dark" />
         <q-btn color="primary" icon="add" label="Add Content" @click="$emit('add')" unelevated />
       </div>
-    </div>
+    </q-toolbar>
 
     <!-- Status Banner - only show during processing or on error -->
     <q-banner 
       v-if="showStatusBanner" 
       :class="statusBannerClass"
-      class="q-mb-md"
+      class="q-mx-md q-mt-sm"
       rounded
     >
       <template v-slot:avatar>
@@ -55,17 +60,21 @@
       </template>
     </q-banner>
 
-    <!-- Content -->
-    <q-card flat bordered class="col">
-      <q-table
-        :rows="dataItems"
-        :columns="columns"
-        row-key="id"
-        :loading="loading"
-        :filter="filter"
-        flat
-        binary-state-sort
-      >
+    <!-- Content: fills remaining height, table scrolls inside -->
+    <div class="col q-pa-md column no-wrap" style="min-height: 0;">
+      <q-card flat bordered class="col column no-wrap" style="min-height: 0;">
+        <q-table
+          :rows="dataItems"
+          :columns="columns"
+          row-key="id"
+          :loading="loading"
+          :filter="filter"
+          flat
+          binary-state-sort
+          virtual-scroll
+          class="col"
+          :rows-per-page-options="[0]"
+        >
         <!-- Custom File Name with Icon -->
         <template v-slot:body-cell-name="props">
           <q-td :props="props">
@@ -127,15 +136,16 @@
         
         <!-- Empty State -->
         <template v-slot:no-data>
-          <div class="full-width row flex-center q-pa-xl text-grey-6 column">
+          <div v-if="!loading" class="full-width row flex-center q-pa-xl text-grey-6 column">
             <q-icon name="folder_open" size="64px" class="q-mb-md" />
             <div class="text-h6">No files in this dataset</div>
             <div>Upload a file or add text to get started.</div>
             <q-btn flat color="primary" label="Add Content" class="q-mt-sm" @click="$emit('add')" />
           </div>
         </template>
-      </q-table>
-    </q-card>
+        </q-table>
+      </q-card>
+    </div>
   </div>
 </template>
 

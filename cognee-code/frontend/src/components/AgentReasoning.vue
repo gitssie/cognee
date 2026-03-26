@@ -17,7 +17,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import type { ReasoningPart } from '@opencode-ai/sdk';
+import type { ReasoningPart } from '@opencode-ai/sdk/v2';
 
 interface Props {
   part: ReasoningPart;

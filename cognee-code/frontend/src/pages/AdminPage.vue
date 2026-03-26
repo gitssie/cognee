@@ -198,8 +198,7 @@ async function handleLogout() {
     $q.notify({ type: 'positive', message: 'Logged out' });
     void router.push('/login');
   } catch {
-    // Even if API call fails, clear local token
-    AuthService.clearToken();
+    // Cookie is cleared by the browser on logout response; just redirect
     void router.push('/login');
   }
 }

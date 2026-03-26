@@ -87,21 +87,21 @@
                       <span class="text-caption text-grey-5">Thinking…</span>
                     </div>
                     <!-- Render parts in their original order -->
-                    <template v-for="part in (msgRaw as DisplayMessage).parts" :key="part.id">
-                      <AgentReasoning v-if="part.type === 'reasoning'" :part="part" />
-                      <AgentToolCall v-else-if="part.type === 'tool'" :part="part" />
-                      <div v-else-if="part.type === 'text'" class="text-part">
-                        <MarkdownRender
-                          :content="partText.get(part.id) ?? part.text ?? ''"
-                          :final="(msgRaw as DisplayMessage).final"
-                        />
-                        <q-spinner-dots
-                          v-if="isLoading && !(msgRaw as DisplayMessage).final && part.id === (msgRaw as DisplayMessage).parts.filter(p => p.type === 'text').at(-1)?.id"
-                          size="1em"
-                          color="primary"
-                        />
-                      </div>
-                    </template>
+                     <template v-for="part in (msgRaw as DisplayMessage).parts" :key="part.id">
+                       <AgentReasoning v-if="part.type === 'reasoning'" :part="part" />
+                       <AgentToolCall v-else-if="part.type === 'tool'" :part="part" />
+                       <div v-else-if="part.type === 'text'" class="text-part">
+                         <MarkdownRender
+                           :content="partText.get(part.id) ?? part.text ?? ''"
+                           :final="!(isLoading && (msgRaw as DisplayMessage).id === `asst:${curUserMessage?.id}`)"
+                         />
+                         <q-spinner-dots
+                           v-if="isLoading && (msgRaw as DisplayMessage).id === `asst:${curUserMessage?.id}` && part.id === (msgRaw as DisplayMessage).parts.filter(p => p.type === 'text').at(-1)?.id"
+                           size="1em"
+                           color="primary"
+                         />
+                       </div>
+                     </template>
                   </div>
                 </template>
               </q-chat-message>
@@ -325,54 +325,24 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import { useQuasar, QInfiniteScroll, QInput } from 'quasar';
-import { createOpencodeClient } from '@opencode-ai/sdk';
-import type { TextPart, ToolPart, ToolStateRunning, ReasoningPart, EventSessionError, Message } from '@opencode-ai/sdk';
-import { createOpencodeClient as createOpencodeClientV2 } from '@opencode-ai/sdk/v2';
-import type { QuestionRequest, PermissionRequest, QuestionAnswer } from '@opencode-ai/sdk/v2';
+import type { TextPart } from '@opencode-ai/sdk/v2';
 import { MarkdownRender } from 'markstream-vue';
 import 'markstream-vue/index.css';
 import AgentToolCall from 'src/components/AgentToolCall.vue';
 import AgentReasoning from 'src/components/AgentReasoning.vue';
 import AgentQuestion from 'src/components/AgentQuestion.vue';
 import AgentPermission from 'src/components/AgentPermission.vue';
-import { KnowledgeService, type Dataset } from 'src/services/knowledge';
+import type { SessionItem } from 'src/services/agents';
+import { useAgentSession, type DisplayMessage } from 'src/composables/useAgentSession';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type DisplayPart = TextPart | ToolPart | ReasoningPart;
-
-interface DisplayMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  time: Date;
-  parts: DisplayPart[];
-  /** true once session.idle fires — tells MarkdownRender stream is complete */
-  final: boolean;
-}
-
-interface SessionItem {
-  id: string;
-  title: string;
-  time: Date;
-}
-
-/** Shape of each entry returned by client.session.messages */
-type RawMessageEntry = {
-  info: Message & { sessionID?: string; parentID?: string; time?: { created?: number } };
-  parts: DisplayPart[];
-};
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const OPENCODE_BASE_URL = import.meta.env.VITE_OPENCODE_URL ?? 'http://localhost:4097';
-const AGENT_NAME = 'cognee-coder';
-
-// ── Refs ──────────────────────────────────────────────────────────────────────
+// ── UI refs ───────────────────────────────────────────────────────────────────
 
 const $q = useQuasar();
 const messagesAreaRef = ref<HTMLElement | null>(null);
 const infiniteScrollRef = ref<QInfiniteScroll | null>(null);
 const inputRef = ref<QInput | null>(null);
+
+// ── Layout ────────────────────────────────────────────────────────────────────
 
 const pageHeight = ref(0);
 const inputAreaHeight = 150;
@@ -391,47 +361,63 @@ const sessionListHeight = computed(() =>
   pageHeight.value > 0 ? `${pageHeight.value - inputAreaHeight}px` : '70vh'
 );
 
-// Chat state
-const displayMessages = ref<DisplayMessage[]>([]);
-/** Set to true once all history is loaded — stops q-infinite-scroll from triggering again */
-const historyExhausted = ref(false);
-const inputMessage = ref('');
-const isLoading = ref(false);
-const isConnected = ref(false);
-const sessionId = ref<string | null>(null);
+// ── Scroll helpers ────────────────────────────────────────────────────────────
 
-// Session list
-const sessionList = ref<SessionItem[]>([]);
+function scrollToBottom() {
+  const el = messagesAreaRef.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
 
-// Datasets
-const datasets = ref<Dataset[]>([]);
-const selectedDatasets = ref<string[]>([]);
+function scrollToBottomNow() {
+  void nextTick(() => scrollToBottom());
+}
 
-// ── OpenCode client ───────────────────────────────────────────────────────────
+function isAtBottom(): boolean {
+  const el = messagesAreaRef.value;
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+}
 
-const client = createOpencodeClient({ baseUrl: OPENCODE_BASE_URL });
-const clientV2 = createOpencodeClientV2({ baseUrl: OPENCODE_BASE_URL });
+function scrollIfAtBottom() {
+  if (isAtBottom()) scrollToBottomNow();
+}
 
-let sseAbort: AbortController | null = null;
-/**
- * Maps server messageID → displayMessages entry id.
- * - For user messages: displayId = server messageID (1:1)
- * - For assistant messages: displayId = parentID (many server msgs → one display entry)
- */
-const msgToDisplayId = new Map<string, string>();
+// ── Composable ────────────────────────────────────────────────────────────────
 
-/** Per-part accumulated text (reactive map, updated on each delta event) */
-const partText = ref<Map<string, string>>(new Map());
-
-/** Pending question request from the AI (shown above input area) */
-const pendingQuestion = ref<QuestionRequest | null>(null);
-/** Pending permission request from the AI (shown above input area) */
-const pendingPermission = ref<PermissionRequest | null>(null);
-
-// ── Computed ──────────────────────────────────────────────────────────────────
-
-const datasetOptions = computed(() =>
-  datasets.value.map(ds => ({ value: ds.id, label: ds.name }))
+const {
+  displayMessages,
+  historyExhausted,
+  inputMessage,
+  isLoading,
+  isConnected,
+  sessionId,
+  sessionList,
+  selectedDatasets,
+  partText,
+  pendingQuestion,
+  pendingPermission,
+  datasetOptions,
+  curUserMessage,
+  loadDatasets,
+  loadSessionList,
+  switchSession,
+  createNewSession,
+  deleteSession,
+  toggleDataset,
+  sendMessage,
+  abortSession,
+  replyToQuestion,
+  rejectQuestion,
+  replyToPermission,
+  startEventSubscription,
+  stopEventSubscription,
+} = useAgentSession(
+  scrollToBottomNow,
+  scrollIfAtBottom,
+  (msg) => $q.notify({ color: 'negative', message: msg, icon: 'error' }),
+  (msg, opts) => $q.notify({ color: 'info', message: msg, icon: opts?.icon ?? 'info', ...(opts?.timeout !== undefined ? { timeout: opts.timeout } : {}) }),
+  (msg) => $q.notify({ color: 'positive', message: msg, icon: 'check' }),
+  () => void nextTick(() => inputRef.value?.focus()),
 );
 
 // ── Suggestions ───────────────────────────────────────────────────────────────
@@ -442,9 +428,8 @@ const suggestions = [
   'What are the main topics?',
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── UI helpers ────────────────────────────────────────────────────────────────
 
-/** Returns the plain text of a user message (joining all text parts). */
 function getUserMessageText(msg: DisplayMessage): string {
   return msg.parts
     .filter((p): p is TextPart => p.type === 'text')
@@ -461,572 +446,13 @@ function formatSessionTime(date: Date): string {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function scrollToBottom() {
-  const el = messagesAreaRef.value;
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-function scrollToBottomNow() {
-  void nextTick(() => scrollToBottom());
-}
-
-/** Returns true when the scroll container is within 80px of the bottom. */
-function isAtBottom(): boolean {
-  const el = messagesAreaRef.value;
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-}
-
-/** Scroll to bottom only when the user hasn't scrolled up to read history. */
-function scrollIfAtBottom() {
-  if (isAtBottom()) scrollToBottomNow();
-}
-
 /**
  * Called by q-infinite-scroll when the user scrolls to the top.
- * Currently we load all messages at once, so there is nothing more to fetch —
- * call done(true) immediately to stop further triggers.
- * When the API gains pagination support, implement incremental loading here.
+ * We load all messages at once, so call done(true) to stop further triggers.
  */
 function onLoadHistory(_index: number, done: (stop?: boolean) => void) {
   done(true);
 }
-
-function toggleDataset(id: string) {
-  const idx = selectedDatasets.value.indexOf(id);
-  if (idx === -1) {
-    selectedDatasets.value.push(id);
-  } else {
-    selectedDatasets.value.splice(idx, 1);
-  }
-}
-
-function buildSystemPromptInjection(): string | undefined {
-  if (selectedDatasets.value.length === 0) return undefined;
-  const names = selectedDatasets.value.map(id => {
-    const ds = datasets.value.find(d => d.id === id);
-    return ds ? ds.name : id;
-  });
-  const namesJson = JSON.stringify(names);
-  return `## MANDATORY Knowledge Base Constraints
-
-The user has selected specific datasets. You MUST pass the following dataset names as the \`datasets\` argument on EVERY call to the \`search\` MCP tool. Never omit this argument.
-
-datasets: ${namesJson}
-
-Example of a correctly formed search call:
-\`\`\`
-search(search_query="...", search_type="CHUNKS", top_k=10, datasets=${namesJson})
-\`\`\`
-
-Failure to include \`datasets\` in every search call is an error.`;
-}
-
-// ── Session list ──────────────────────────────────────────────────────────────
-
-/** Resets all per-session chat state. Call before switching / deleting a session. */
-function resetChatState() {
-  displayMessages.value = [];
-  historyExhausted.value = false;
-  msgToDisplayId.clear();
-  partText.value = new Map();
-  pendingQuestion.value = null;
-  pendingPermission.value = null;
-}
-
-/** Upsert a session entry — updates in-place if exists, prepends if new. */
-function upsertSession(item: SessionItem) {
-  const existing = sessionList.value.find(s => s.id === item.id);
-  if (existing) {
-    existing.title = item.title || existing.title;
-    existing.time = item.time;
-  } else {
-    sessionList.value.unshift(item);
-  }
-}
-
-async function loadSessionList() {
-  try {
-    const res = await client.session.list({ query: { roots: 'true' } as { directory?: string } });
-    const list = res.data ?? [];
-    const fetched = (list as { id: string; title?: string; time?: { created?: number } }[])
-      .map(s => ({
-        id: s.id,
-        title: s.title ?? 'Untitled',
-        time: new Date(s.time?.created ?? Date.now()),
-      }))
-      .sort((a, b) => b.time.getTime() - a.time.getTime());
-    // Merge: keep any locally-added sessions that aren't in the remote list yet
-    const fetchedIds = new Set(fetched.map(s => s.id));
-    const localOnly = sessionList.value.filter(s => !fetchedIds.has(s.id));
-    sessionList.value = [...localOnly, ...fetched].sort((a, b) => b.time.getTime() - a.time.getTime());
-  } catch {
-    // silent
-  }
-}
-
-async function loadSessionMessages(sid: string) {
-  resetChatState();
-  // Reset infinite scroll index so it can trigger again on next session load
-  infiniteScrollRef.value?.reset();
-  try {
-    const res = await client.session.messages({ path: { id: sid } });
-    const msgs = res.data ?? [];
-
-    for (const entry of msgs as RawMessageEntry[]) {
-      const { info, parts } = entry;
-      if (!info?.id || !info?.role) continue;
-
-      const displayParts = parts.filter(
-        (p): p is TextPart | ToolPart | ReasoningPart =>
-          p.type === 'text' || p.type === 'tool' || p.type === 'reasoning'
-      );
-
-      // Pre-parse historical text parts (final=true, stream is already complete)
-      for (const p of displayParts) {
-        if (p.type === 'text') {
-          partText.value.set(p.id, p.text);
-        }
-      }
-
-      if (info.role === 'user') {
-        // User message: own id is the display id
-        msgToDisplayId.set(info.id, info.id);
-        displayMessages.value.push({
-          id: info.id,
-          role: 'user',
-          time: new Date(info.time?.created ?? Date.now()),
-          parts: displayParts,
-          final: true,
-        });
-      } else {
-        // Assistant message: group by parentID.
-        // Prefix with "asst:" so the display id never collides with the user
-        // message that has the same id as parentID.
-        const displayId = `asst:${info.parentID ?? info.id}`;
-        msgToDisplayId.set(info.id, displayId);
-        const existing = displayMessages.value.find(m => m.id === displayId);
-        if (existing) {
-          existing.parts.push(...displayParts);
-        } else {
-          displayMessages.value.push({
-            id: displayId,
-            role: 'assistant',
-            time: new Date(info.time?.created ?? Date.now()),
-            parts: displayParts,
-            final: true,
-          });
-        }
-      }
-    }
-    // All messages loaded — mark history exhausted so infinite scroll stops triggering.
-    historyExhausted.value = true;
-    await nextTick();
-    scrollToBottomNow();
-
-    // Restore any pending question/permission for this session after page reload
-    try {
-      const [qRes, pRes] = await Promise.all([
-        clientV2.question.list(),
-        clientV2.permission.list(),
-      ]);
-      const questions: QuestionRequest[] = (qRes as { data?: QuestionRequest[] }).data ?? [];
-      const permissions: PermissionRequest[] = (pRes as { data?: PermissionRequest[] }).data ?? [];
-
-      // Find any tool part with status 'running' (called and awaiting permission)
-      const allParts = displayMessages.value.flatMap(m => m.parts);
-      const runningToolParts = allParts.filter(
-        (p): p is ToolPart => p.type === 'tool' && p.state.status === 'running'
-      );
-
-      // Convert running tool parts that have no live permission request to 'error'
-      // (mirrors backend processor.ts behavior when a session ends mid-tool)
-      for (const toolPart of runningToolParts) {
-        const hasLivePermission = permissions.some(
-          (p: PermissionRequest) => p.tool?.callID === toolPart.callID && p.sessionID === sid
-        );
-        if (!hasLivePermission) {
-          const runningState = toolPart.state as ToolStateRunning;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (toolPart as any).state = {
-            status: 'error' as const,
-            input: runningState.input,
-            error: 'Tool execution aborted',
-            time: { start: runningState.time.start, end: Date.now() },
-          };
-        }
-      }
-
-      const pendingQ = questions.find((q: QuestionRequest) => q.sessionID === sid);
-      // Match permission to a running tool part by callID, or fall back to sessionID match
-      const runningCallIDs = new Set(runningToolParts.filter(p => p.state.status === 'running').map(p => p.callID));
-      const pendingP = permissions.find(
-        (p: PermissionRequest) => p.sessionID === sid && (p.tool?.callID ? runningCallIDs.has(p.tool.callID) : true)
-      );
-
-      if (pendingQ) pendingQuestion.value = pendingQ;
-      if (pendingP) pendingPermission.value = pendingP;
-    } catch {
-      // silent
-    }
-  } catch {
-    // silent
-  }
-}
-
-async function switchSession(sid: string) {
-  if (sid === sessionId.value) return;
-  sessionId.value = sid;
-  await loadSessionMessages(sid);
-}
-
-async function createNewSession() {
-  try {
-    const session = unwrapSession(await client.session.create({}));
-    upsertSession({
-      id: session.id,
-      title: session.title ?? 'Untitled',
-      time: new Date(session.time?.created ?? Date.now()),
-    });
-    sessionId.value = session.id;
-    resetChatState();
-    void nextTick(() => { inputRef.value?.focus(); });
-  } catch {
-    $q.notify({ color: 'negative', message: 'Failed to create session', icon: 'error' });
-  }
-}
-
-async function deleteSession(sid: string) {
-  try {
-    await client.session.delete({ path: { id: sid } });
-    sessionList.value = sessionList.value.filter(s => s.id !== sid);
-    if (sessionId.value === sid) {
-      sessionId.value = null;
-      resetChatState();
-    }
-  } catch {
-    $q.notify({ color: 'negative', message: 'Failed to delete session', icon: 'error' });
-  }
-}
-
-// ── Session management ────────────────────────────────────────────────────────
-
-type RawSession = { id: string; title?: string; time?: { created?: number } };
-
-/** The SDK wraps the response in `{ data }` but the type doesn't always reflect it. */
-function unwrapSession(res: unknown): RawSession {
-  return ((res as { data?: RawSession }).data ?? res) as RawSession;
-}
-
-async function ensureSession(): Promise<string> {
-  if (sessionId.value) return sessionId.value;
-  const session = unwrapSession(await client.session.create({}));
-  sessionId.value = session.id;
-  upsertSession({
-    id: session.id,
-    title: session.title ?? 'Untitled',
-    time: new Date(session.time?.created ?? Date.now()),
-  });
-  return session.id;
-}
-
-// ── SSE subscription ──────────────────────────────────────────────────────────
-
-function startEventSubscription() {
-  sseAbort = new AbortController();
-
-  void (async () => {
-    try {
-      const result = await client.event.subscribe({});
-      for await (const event of result.stream) {
-        if (sseAbort?.signal.aborted) break;
-        handleEvent(event);
-      }
-    } catch {
-      // AbortError or connection closed — not fatal
-    }
-  })();
-}
-
-function handleEvent(raw: unknown) {
-  const ev = raw as { type?: string; properties?: unknown };
-  if (!ev?.type) return;
-
-  if (ev.type === 'server.connected') {
-    isConnected.value = true;
-
-  } else if (ev.type === 'session.updated') {
-    const e = ev as { properties: { info: { id: string; title?: string; time?: { created?: number }; parentID?: string } } };
-    const info = e.properties?.info;
-    if (!info?.id) return;
-    if (info.parentID) return;  // skip sub-agent sessions
-    upsertSession({
-      id: info.id,
-      title: info.title ?? 'Untitled',
-      time: new Date(info.time?.created ?? Date.now()),
-    });
-
-  } else if (ev.type === 'message.updated') {
-    type InfoShape = { id: string; role: 'user' | 'assistant'; sessionID?: string; parentID?: string; time?: { created?: number } };
-    const e = ev as { type: string; properties: { info: InfoShape } };
-    const { info } = e.properties;
-    if (!info?.id || !info?.role) return;
-    if (info.sessionID && info.sessionID !== sessionId.value) return;
-
-    if (info.role === 'user') {
-      msgToDisplayId.set(info.id, info.id);
-      if (!displayMessages.value.find(m => m.id === info.id)) {
-        displayMessages.value.push({ id: info.id, role: 'user', time: new Date(info.time?.created ?? Date.now()), parts: [], final: false });
-        scrollToBottomNow();
-      }
-    } else {
-      // Assistant: display entry key = "asst:" + parentID so it never
-      // collides with the user message that owns the same id as parentID.
-      const displayId = `asst:${info.parentID ?? info.id}`;
-      msgToDisplayId.set(info.id, displayId);
-      if (!displayMessages.value.find(m => m.id === displayId)) {
-        displayMessages.value.push({ id: displayId, role: 'assistant', time: new Date(info.time?.created ?? Date.now()), parts: [], final: false });
-        scrollToBottomNow();
-      }
-    }
-
-  } else if (ev.type === 'message.part.delta') {
-    // Incremental delta: update the relevant part in-place, then re-parse text nodes
-    const e = ev as { type: string; properties: { sessionID: string; messageID: string; partID: string; field: string; delta: string } };
-    const { sessionID, messageID, partID, field, delta } = e.properties;
-    if (sessionID && sessionID !== sessionId.value) return;
-    if (field !== 'text') return;
-
-    // Accumulate delta into partText buffer
-    const prev = partText.value.get(partID) ?? '';
-    const accumulated = prev + delta;
-    partText.value.set(partID, accumulated);
-
-    // Update reasoning part text in-place (Vue 3 reactive proxy tracks property mutations)
-    const displayId = msgToDisplayId.get(messageID);
-    if (displayId) {
-      const msg = displayMessages.value.find(m => m.id === displayId);
-      if (msg) {
-        const part = msg.parts.find(p => p.id === partID);
-        if (part?.type === 'reasoning') {
-          (part as ReasoningPart).text = accumulated;
-        }
-      }
-    }
-
-    scrollIfAtBottom();
-
-  } else if (ev.type === 'message.part.updated') {
-    const e = ev as { type: string; properties: { part: TextPart | ToolPart | ReasoningPart } };
-    const { part } = e.properties;
-    if (!part) return;
-    if (part.type !== 'text' && part.type !== 'tool' && part.type !== 'reasoning') return;
-    if (part.sessionID && part.sessionID !== sessionId.value) return;
-
-    // Resolve display entry via msgToDisplayId
-    let displayId = msgToDisplayId.get(part.messageID);
-    if (!displayId) {
-      displayId = `asst:${part.messageID}`;
-      msgToDisplayId.set(part.messageID, displayId);
-      displayMessages.value.push({ id: displayId, role: 'assistant', time: new Date(), parts: [], final: false });
-    }
-
-    let msg = displayMessages.value.find(m => m.id === displayId);
-    if (!msg) {
-      msg = { id: displayId, role: 'assistant', time: new Date(), parts: [], final: false };
-      displayMessages.value.push(msg);
-    }
-
-    const idx = msg.parts.findIndex(p => p.id === part.id);
-    if (idx === -1) {
-      // New part: push it. For text/reasoning, delta events accumulate text separately,
-      // so preserve whatever is in the buffer rather than using the potentially empty server value.
-      if (part.type === 'text' || part.type === 'reasoning') {
-        const bufferedText = partText.value.get(part.id);
-        if (bufferedText) {
-          part.text = bufferedText;
-        }
-      }
-      msg.parts.push(part);
-    } else {
-      // Existing part: update metadata but preserve delta-accumulated text
-      if (part.type === 'text' || part.type === 'reasoning') {
-        const bufferedText = partText.value.get(part.id);
-        // Use the longer of buffered vs server text (server may trim on completion)
-        if (bufferedText && bufferedText.length > (part.text?.length ?? 0)) {
-          part.text = bufferedText;
-        }
-      }
-      msg.parts.splice(idx, 1, part);
-    }
-
-    // Fallback: if no delta events have populated partText yet (e.g. non-streaming load),
-    // seed the buffer from part.text
-    if (part.type === 'text' && !partText.value.has(part.id) && part.text) {
-      partText.value.set(part.id, part.text);
-    }
-
-    scrollIfAtBottom();
-
-  } else if (ev.type === 'session.idle') {
-    isLoading.value = false;
-    for (const m of displayMessages.value) {
-      if (m.role === 'assistant') m.final = true;
-    }
-    // Finalize streaming — MarkdownRender handles final settle via the `final` prop
-    scrollToBottomNow();
-
-  } else if (ev.type === 'session.error') {
-    const e = ev as EventSessionError;
-    isLoading.value = false;
-    const errMsg = typeof e.properties.error === 'string' ? e.properties.error : 'Agent error';
-    $q.notify({ color: 'negative', message: errMsg, icon: 'error' });
-
-  } else if (ev.type === 'question.asked') {
-    const q = (ev as { type: string; properties: QuestionRequest }).properties;
-    if (q.sessionID === sessionId.value) {
-      pendingQuestion.value = q;
-    }
-
-  } else if (ev.type === 'question.replied' || ev.type === 'question.rejected') {
-    const props = (ev as { type: string; properties: { sessionID: string; requestID: string } }).properties;
-    if (pendingQuestion.value?.id === props.requestID) {
-      pendingQuestion.value = null;
-    }
-
-  } else if (ev.type === 'permission.asked') {
-    const p = (ev as { type: string; properties: PermissionRequest }).properties;
-    if (p.sessionID === sessionId.value) {
-      pendingPermission.value = p;
-    }
-
-  } else if (ev.type === 'permission.replied') {
-    const props = (ev as { type: string; properties: { sessionID: string; requestID: string } }).properties;
-    if (pendingPermission.value?.id === props.requestID) {
-      pendingPermission.value = null;
-    }
-  }
-}
-
-// ── Send message ──────────────────────────────────────────────────────────────
-
-async function sendMessage() {
-  const text = inputMessage.value.trim();
-  if (!text || isLoading.value) return;
-
-  // Handle /compact slash command
-  if (text === '/compact') {
-    inputMessage.value = '';
-    await runCompact();
-    return;
-  }
-
-  inputMessage.value = '';
-  isLoading.value = true;
-
-  try {
-    const sid = await ensureSession();
-
-    const system = buildSystemPromptInjection();
-    await client.session.promptAsync({
-      path: { id: sid },
-      body: {
-        agent: AGENT_NAME,
-        parts: [{ type: 'text', text }],
-        ...(system ? { system } : {}),
-      },
-    });
-  } catch (err) {
-    isLoading.value = false;
-    $q.notify({
-      color: 'negative',
-      message: (err instanceof Error ? err.message : null) ?? 'Failed to send message. Is the OpenCode agent running?',
-      icon: 'error',
-    });
-  }
-}
-
-async function runCompact() {
-  if (!sessionId.value) {
-    $q.notify({ color: 'warning', message: 'No active session to compact', icon: 'info' });
-    return;
-  }
-
-  // Find providerID/modelID from the last assistant message
-  let providerID = '';
-  let modelID = '';
-  try {
-    const res = await client.session.messages({ path: { id: sessionId.value } });
-    const msgs = (res.data ?? res) as { info: { role?: string; providerID?: string; modelID?: string } }[];
-    const lastAsst = [...msgs].reverse().find(m => m.info?.role === 'assistant' && m.info?.providerID);
-    if (lastAsst?.info?.providerID && lastAsst?.info?.modelID) {
-      providerID = lastAsst.info.providerID;
-      modelID = lastAsst.info.modelID;
-    }
-  } catch {
-    // fall through — will notify below
-  }
-
-  if (!providerID || !modelID) {
-    $q.notify({ color: 'warning', message: 'Cannot determine model for compaction — send a message first', icon: 'info' });
-    return;
-  }
-
-  $q.notify({ color: 'info', message: 'Compacting session…', icon: 'compress', timeout: 2000 });
-
-  try {
-    await client.session.summarize({
-      path: { id: sessionId.value },
-      body: { providerID, modelID },
-    });
-    $q.notify({ color: 'positive', message: 'Session compacted', icon: 'check' });
-  } catch (err) {
-    $q.notify({
-      color: 'negative',
-      message: (err instanceof Error ? err.message : null) ?? 'Compaction failed',
-      icon: 'error',
-    });
-  }
-}
-
-async function abortSession() {
-  if (!sessionId.value) return;
-  try {
-    await client.session.abort({ path: { id: sessionId.value } });
-  } catch {
-    // ignore
-  }
-  isLoading.value = false;
-}
-
-// ── Question / Permission callbacks ───────────────────────────────────────────
-
-async function replyToQuestion(requestID: string, answers: QuestionAnswer[]) {
-  try {
-    await clientV2.question.reply({ requestID, answers });
-  } catch {
-    $q.notify({ color: 'negative', message: 'Failed to reply to question', icon: 'error' });
-  }
-}
-
-async function rejectQuestion(requestID: string) {
-  try {
-    await clientV2.question.reject({ requestID });
-  } catch {
-    // silent — dock is dismissed regardless
-  }
-  pendingQuestion.value = null;
-}
-
-async function replyToPermission(requestID: string, reply: 'once' | 'always' | 'reject') {
-  try {
-    await clientV2.permission.reply({ requestID, reply });
-  } catch {
-    $q.notify({ color: 'negative', message: 'Failed to respond to permission', icon: 'error' });
-  }
-}
-
-// ── Input handling ────────────────────────────────────────────────────────────
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !event.shiftKey) {
@@ -1044,25 +470,15 @@ function useSuggestion(s: string) {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
-async function loadDatasets() {
-  try {
-    datasets.value = await KnowledgeService.getDatasets();
-  } catch {
-    // silent
-  }
-}
-
 onMounted(() => {
   void loadDatasets();
   void loadSessionList();
-  void startEventSubscription();
-  void nextTick(() => {
-    inputRef.value?.focus();
-  });
+  startEventSubscription();
+  void nextTick(() => inputRef.value?.focus());
 });
 
 onUnmounted(() => {
-  sseAbort?.abort();
+  stopEventSubscription();
 });
 </script>
 

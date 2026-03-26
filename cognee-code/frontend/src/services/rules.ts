@@ -5,15 +5,31 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,
 });
 
+export interface Rule {
+  id: string;
+  text: string;
+}
+
 export const RulesService = {
-  async getRules(nodeset: string = 'coding_agent_rules'): Promise<string[]> {
-    const response = await api.get<string[]>('/rules', { params: { nodeset } });
+  async getRules(projectId?: string): Promise<Rule[]> {
+    const params: Record<string, string> = {};
+    if (projectId) params['project_id'] = projectId;
+    const response = await api.get<Rule[]>('/rules', { params });
     return response.data;
   },
 
-  async addRule(text: string, nodeset: string = 'coding_agent_rules'): Promise<void> {
-    await api.post('/rules', { text, nodeset });
+  async addRule(text: string, projectId?: string): Promise<void> {
+    const body: Record<string, string> = { text };
+    if (projectId) body['project_id'] = projectId;
+    await api.post('/rules', body);
+  },
+
+  async deleteRule(ruleId: string, projectId?: string): Promise<void> {
+    const params: Record<string, string> = {};
+    if (projectId) params['project_id'] = projectId;
+    await api.delete(`/rules/${ruleId}`, { params });
   },
 };

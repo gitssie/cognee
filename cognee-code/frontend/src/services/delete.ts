@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { AuthService } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -15,7 +14,6 @@ export const DeleteService = {
   async deleteData(dataId: string, datasetId: string, mode: DeleteMode = 'soft'): Promise<void> {
     await axios.delete(`${API_BASE}/api/v1/delete`, {
       params: { data_id: dataId, dataset_id: datasetId, mode },
-      headers: AuthService.getAuthHeaders(),
     });
   },
 };

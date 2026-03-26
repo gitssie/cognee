@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { AuthService } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -61,9 +60,7 @@ export const ResponsesService = {
    * OpenAI-compatible responses endpoint with function calling support
    */
   async createResponse(request: ResponseRequest): Promise<ResponseBody> {
-    const response = await axios.post<ResponseBody>(`${API_BASE}/api/v1/responses/`, request, {
-      headers: AuthService.getAuthHeaders(),
-    });
+    const response = await axios.post<ResponseBody>(`${API_BASE}/api/v1/responses/`, request);
     return response.data;
   },
 

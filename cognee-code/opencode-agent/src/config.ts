@@ -1,4 +1,9 @@
 import { existsSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const COGNEE_MCP_URL =
     process.env.COGNEE_MCP_URL ?? "http://localhost:8000/mcp/";
@@ -59,8 +64,8 @@ function buildOpencodeConfig() {
             },
         },
 
-        // M9: Register the CogneeMemoryPlugin for automatic memory injection
-        plugin: ["@cognee/opencode-memory-plugin"],
+        // M9-2: Register the CogneeProjectPlugin for automatic rules + dataset injection
+        plugin: [`file://${join(__dirname, "plugin", "index.ts")}`],
 
         // Custom agent: cognee-coder — a coding assistant with persistent memory
         agent: {
@@ -72,29 +77,16 @@ function buildOpencodeConfig() {
                 prompt: [
                     "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.",
                     "",
-                    "## Memory",
-                    "Relevant knowledge from past sessions is automatically injected above.",
-                    "You can also use these tools explicitly:",
-                    "- `cognee_search`: Search the knowledge graph for specific past knowledge",
-                    "- `cognee_save`: Persist important decisions, conventions, or findings",
-                    "",
-                    "## Memory Management (MCP tools — for explicit operations)",
-                    "1. At the start of each task, call `read_memory` to load existing knowledge.",
-                    "2. Before searching, use the `search` MCP tool to query the knowledge graph.",
-                    "3. Save important coding decisions, architecture choices, and best practices",
-                    "   using `write_memory`.",
-                    "4. At the end of each coding session, call `save_interaction` to extract",
-                    "   reusable coding rules.",
-                    "",
-                    "## Coding Principles",
-                    "- Follow the existing code style and patterns in the project.",
-                    "- Read relevant files before making changes.",
-                    "- Keep changes small and focused.",
-                    "- When uncertain about design decisions, consult the cognee knowledge base first.",
+                    "## Knowledge Base Search",
+                    "Use the `search` MCP tool to query the knowledge base when you need information",
+                    "about the project, coding conventions, or past decisions.",
+                    "- search_type: Use GRAPH_COMPLETION for natural language Q&A",
+                    "- datasets: Restrict to specific dataset names when provided",
                     "",
                     "## Dataset Constraints",
-                    "If the system prompt contains a '## 知识库查询约束' or '## Knowledge Base Constraints'",
-                    "section, you MUST respect those dataset restrictions when calling the `search` tool.",
+                    "If the user message contains a '<system-reminder>' block listing available datasets,",
+                    "you MUST restrict your `search` MCP tool calls to only those datasets.",
+                    "Pass the dataset names as the `datasets` parameter when calling `search`.",
                 ].join("\n"),
                 steps: 50,
                 temperature: 0.1,

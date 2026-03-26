@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { AuthService } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -36,7 +35,6 @@ export const UpdateService = {
     const response = await axios.patch<UpdateResponse>(`${API_BASE}/api/v1/update`, formData, {
       params: { data_id: dataId, dataset_id: datasetId },
       headers: {
-        ...AuthService.getAuthHeaders(),
         'Content-Type': 'multipart/form-data',
       },
     });

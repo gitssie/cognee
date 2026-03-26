@@ -1,12 +1,12 @@
 <template>
   <div class="column full-height">
     <!-- Header -->
-    <div class="q-pa-md row items-center justify-between bg-grey-1">
-      <div class="text-subtitle1 text-weight-bold">Knowledge Bases</div>
+    <q-toolbar class="bg-grey-1">
+      <q-toolbar-title class="text-subtitle1 text-weight-bold">Knowledge Bases</q-toolbar-title>
       <q-btn round flat icon="add" color="primary" @click="$emit('create')">
         <q-tooltip>Create New Dataset</q-tooltip>
       </q-btn>
-    </div>
+    </q-toolbar>
 
     <q-separator />
 
@@ -21,7 +21,20 @@
 
     <!-- List -->
     <q-scroll-area class="col">
-      <q-list separator>
+      <!-- Loading skeleton -->
+      <q-list v-if="props.loading && props.datasets.length === 0" separator>
+        <q-item v-for="n in 10" :key="n" >
+          <q-item-section avatar>
+            <q-skeleton type="circle" size="24px" />
+          </q-item-section>
+          <q-item-section>
+            <q-skeleton type="text" width="60%" height="14px" />
+            <q-skeleton type="text" width="40%" height="12px" class="q-mt-xs" />
+          </q-item-section>
+        </q-item>
+      </q-list>
+
+      <q-list v-else separator>
         <q-item
           v-for="ds in filteredDatasets"
           :key="ds.id"
@@ -36,26 +49,25 @@
           </q-item-section>
 
           <q-item-section>
-            <q-item-label class="row items-center">
-              <span>{{ ds.name }}</span>
-              <!-- Status Badge -->
-              <q-badge 
-                v-if="getDatasetStatus(ds) !== 'empty'"
-                :color="getStatusColor(getDatasetStatus(ds))" 
-                :label="getStatusLabel(getDatasetStatus(ds))"
-                class="q-ml-sm"
-                rounded
-              />
-            </q-item-label>
-            <q-item-label caption class="row items-center q-gutter-xs">
+            <q-item-label>{{ ds.name }}</q-item-label>
+            <q-item-label caption class="row items-center" style="gap: 4px;">
               <span>{{ formatDate(ds.created_at) }}</span>
               <!-- Processing indicator -->
-              <q-spinner-dots 
-                v-if="getDatasetStatus(ds) === 'processing'" 
-                color="secondary" 
+              <q-spinner-dots
+                v-if="getDatasetStatus(ds) === 'processing'"
+                color="secondary"
                 size="14px"
               />
             </q-item-label>
+          </q-item-section>
+
+          <!-- Status Badge (side) -->
+          <q-item-section side v-if="getDatasetStatus(ds) !== 'empty'">
+            <q-badge
+              :color="getStatusColor(getDatasetStatus(ds))"
+              :label="getStatusLabel(getDatasetStatus(ds))"
+              rounded
+            />
           </q-item-section>
 
           <q-item-section side>

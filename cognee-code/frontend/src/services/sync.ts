@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { AuthService } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -34,9 +33,7 @@ export const SyncService = {
     if (datasetIds && datasetIds.length > 0) {
       payload.dataset_ids = datasetIds;
     }
-    const response = await axios.post<SyncResponse>(`${API_BASE}/api/v1/sync`, payload, {
-      headers: AuthService.getAuthHeaders(),
-    });
+    const response = await axios.post<SyncResponse>(`${API_BASE}/api/v1/sync`, payload);
     return response.data;
   },
 
@@ -44,9 +41,7 @@ export const SyncService = {
    * Get sync status overview
    */
   async getStatus(): Promise<SyncStatus> {
-    const response = await axios.get<SyncStatus>(`${API_BASE}/api/v1/sync/status`, {
-      headers: AuthService.getAuthHeaders(),
-    });
+    const response = await axios.get<SyncStatus>(`${API_BASE}/api/v1/sync/status`);
     return response.data;
   },
 };

@@ -93,3 +93,16 @@ To run the backend server locally:
 cd cognee-code/server
 uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## 9. Core Engine Dependency — CRITICAL Rule
+
+The backend's `.venv` installs the `cognee` core engine as a **local path dependency** from `/root/workspace/github/cognee`.
+
+**IMPORTANT:** After modifying ANY file under `/root/workspace/github/cognee/cognee/` (the core engine source), you MUST reinstall the package into the server's `.venv`, otherwise the running server will still use the old cached code:
+
+```bash
+cd /root/workspace/github/cognee/cognee-code/server
+uv sync --dev --all-extras --reinstall-package cognee
+```
+
+**Failure to do this after patching core engine files will cause confusing bugs** — the source fix appears correct but the server keeps crashing because `.venv` still runs the stale installed version.

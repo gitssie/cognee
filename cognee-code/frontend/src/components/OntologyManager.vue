@@ -63,11 +63,10 @@
     <!-- Content Dialog -->
     <q-dialog v-model="showContentDialog" full-width>
       <q-card>
-        <q-card-section class="row items-center bg-primary text-white">
-          <div class="text-h6">{{ selectedOntology?.ontology_key }}</div>
-          <q-space />
+        <q-toolbar class="bg-primary text-white">
+          <q-toolbar-title>{{ selectedOntology?.ontology_key }}</q-toolbar-title>
           <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
+        </q-toolbar>
         <q-card-section class="scroll" style="max-height: 70vh">
           <pre>{{ ontologyContent }}</pre>
         </q-card-section>

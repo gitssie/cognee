@@ -2,14 +2,11 @@
   <q-dialog v-model="isOpen" @show="onDialogShow">
     <q-card class="share-dialog">
       <!-- Header -->
-      <q-card-section class="row items-center q-pb-none">
-        <div class="text-h6">
-          <q-icon name="share" class="q-mr-sm" />
-          Share Dataset
-        </div>
-        <q-space />
+      <q-toolbar>
+        <q-icon name="share" class="q-mr-sm" />
+        <q-toolbar-title>Share Dataset</q-toolbar-title>
         <q-btn icon="close" flat round dense v-close-popup />
-      </q-card-section>
+      </q-toolbar>
 
       <q-separator class="q-my-md" />
 

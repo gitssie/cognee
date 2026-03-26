@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { AuthService } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -42,16 +41,12 @@ export interface SettingsPayload {
 
 export const SettingsService = {
   async getSettings(): Promise<SystemSettings> {
-    const response = await axios.get<SystemSettings>(`${API_BASE}/api/v1/settings`, {
-      headers: AuthService.getAuthHeaders(),
-    });
+    const response = await axios.get<SystemSettings>(`${API_BASE}/api/v1/settings`);
     return response.data;
   },
 
   async saveSettings(payload: SettingsPayload): Promise<SystemSettings> {
-    const response = await axios.post<SystemSettings>(`${API_BASE}/api/v1/settings`, payload, {
-      headers: AuthService.getAuthHeaders(),
-    });
+    const response = await axios.post<SystemSettings>(`${API_BASE}/api/v1/settings`, payload);
     return response.data;
   },
 };

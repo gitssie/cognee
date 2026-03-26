@@ -1,11 +1,10 @@
 <template>
   <q-dialog v-model="isOpen" persistent>
     <q-card style="min-width: 500px; max-width: 600px;">
-      <q-card-section class="row items-center">
-        <div class="text-h6">Add Content</div>
-        <q-space />
+      <q-toolbar>
+        <q-toolbar-title>Add Content</q-toolbar-title>
         <q-btn icon="close" flat round dense v-close-popup @click="onCancel" :disable="isUploading" />
-      </q-card-section>
+      </q-toolbar>
 
       <q-separator />
 
@@ -13,7 +12,7 @@
       <div v-if="isUploading" class="upload-overlay">
         <div class="column items-center q-pa-xl">
           <q-circular-progress
-            :value="uploadProgress"
+            :value="Math.round(uploadProgress)"
             size="80px"
             :thickness="0.15"
             color="secondary"
@@ -21,7 +20,7 @@
             show-value
             class="q-mb-md"
           >
-            <span class="text-subtitle1 text-weight-bold">{{ uploadProgress }}%</span>
+            <span class="text-subtitle1 text-weight-bold">{{ Math.round(uploadProgress) }}%</span>
           </q-circular-progress>
           <div class="text-subtitle1 text-grey-8 q-mb-xs">{{ uploadStatusText }}</div>
           <div class="text-caption text-grey-6">{{ selectedFileName }}</div>

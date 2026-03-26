@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Type, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 
 class BaseRetriever(ABC):
@@ -13,12 +13,13 @@ class BaseRetriever(ABC):
     """
 
     @abstractmethod
-    async def get_retrieved_objects(self, query: str) -> Any:
+    async def get_retrieved_objects(self, query: Optional[str], query_batch: Optional[str]) -> Any:
         """
         Retrieves the raw data points from the underlying storage (Graph or Vector DB).
 
         Args:
             query (str): The search query or input string.
+            query_batch (List[str]): The batch of search queries.
 
         Returns:
             List[Any]: A list of raw objects (e.g., Edge objects, Document chunks)
@@ -27,12 +28,18 @@ class BaseRetriever(ABC):
         pass
 
     @abstractmethod
-    async def get_context_from_objects(self, query: str, retrieved_objects: Any) -> str:
+    async def get_context_from_objects(
+        self,
+        query: Optional[str] = None,
+        query_batch: Optional[str] = None,
+        retrieved_objects: Any = None,
+    ) -> Union[str, List[str]]:
         """
         Transforms raw retrieved objects into a structured context for the LLM.
 
         Args:
             query (str): The search query or input string.
+            query_batch (List[str]): The batch of search queries.
             retrieved_objects (List[Any]): The output from get_retrieved_objects.
 
         Returns:
@@ -44,15 +51,17 @@ class BaseRetriever(ABC):
     @abstractmethod
     async def get_completion_from_context(
         self,
-        query: str,
-        retrieved_objects: Any,
-        context: Any,
+        query: Optional[str] = None,
+        query_batch: Optional[List[str]] = None,
+        retrieved_objects: Any = None,
+        context: Any = None,
     ) -> Union[List[str], List[dict]]:
         """
         Generates a final output or answer based on the query and retrieved context.
 
         Args:
             query (str): The original user query.
+            query_batch (List[str]): The batch of original user queries.
             retrieved_objects (List[Any]): The output from get_retrieved_objects.
             context (Optional[Any]): The formatted context string/data used to
                 augment the generation. Output from get_context_from_objects.
@@ -61,6 +70,14 @@ class BaseRetriever(ABC):
             List[Any]: A list containing the generated completions or response objects.
         """
         pass
+
+    def _extract_context_object_ids(self, retrieved_objects: Any) -> Optional[Dict[str, List[str]]]:
+        """
+        Extract node_ids and edge_ids from retrieved_objects for session QA.
+        Override in retrievers that use session and have graph elements to store.
+        Only called when session is enabled.
+        """
+        return None
 
     async def get_completion(self, query: str) -> Union[List[str], List[dict]]:
         """
@@ -72,7 +89,11 @@ class BaseRetriever(ABC):
         Returns:
             List[Any]: A list containing the generated completions or response objects.
         """
-        retrieved_objects = await self.get_retrieved_objects(query)
-        context = await self.get_context_from_objects(query, retrieved_objects)
-        completion = await self.get_completion_from_context(query, retrieved_objects, context)
+        retrieved_objects = await self.get_retrieved_objects(query=query)
+        context = await self.get_context_from_objects(
+            query=query, retrieved_objects=retrieved_objects
+        )
+        completion = await self.get_completion_from_context(
+            query=query, retrieved_objects=retrieved_objects, context=context
+        )
         return completion

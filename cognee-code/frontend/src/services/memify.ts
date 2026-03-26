@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { AuthService } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -25,9 +24,7 @@ export const MemifyService = {
    * Memify is similar to Cognify but focuses on memory/extraction tasks
    */
   async memify(payload: MemifyPayload): Promise<MemifyResponse> {
-    const response = await axios.post<MemifyResponse>(`${API_BASE}/api/v1/memify`, payload, {
-      headers: AuthService.getAuthHeaders(),
-    });
+    const response = await axios.post<MemifyResponse>(`${API_BASE}/api/v1/memify`, payload);
     return response.data;
   },
 };

@@ -221,6 +221,13 @@ export const KnowledgeService = {
     return response.data;
   },
 
+  // Open SSE stream for dataset status updates (replaces polling)
+  getDatasetStatusStreamUrl(datasetIds: string[]): string {
+    const params = new URLSearchParams();
+    datasetIds.forEach(id => params.append('dataset', id));
+    return `http://localhost:8000/api/v1/datasets/status/stream?${params.toString()}`;
+  },
+
   // Reset stale/stuck pipeline status for datasets
   async resetDatasetStatus(datasetIds: string[]): Promise<{ reset: string[]; message: string }> {
     if (datasetIds.length === 0) {
@@ -271,7 +278,7 @@ export const KnowledgeService = {
         
         const result: DatasetWithStatus = {
           ...dataset,
-          status: this.getSimplifiedStatus(pipelineStatus),
+          status: pipelineStatus ? this.getSimplifiedStatus(pipelineStatus) : DatasetStatus.EMPTY,
         };
         if (statusUpdatedAt !== undefined) {
           result.statusUpdatedAt = statusUpdatedAt;
