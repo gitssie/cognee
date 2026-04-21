@@ -17,11 +17,12 @@ logger = get_logger()
 
 
 async def get_retriever_output(query_type: SearchType, query_text: str, **kwargs):
-    graph_engine = await get_graph_engine()
-    is_empty = await graph_engine.is_empty()
+    if query_type is not SearchType.MUNINN_RECALL:
+        graph_engine = await get_graph_engine()
+        is_empty = await graph_engine.is_empty()
 
-    if is_empty:
-        logger.warning("Search attempt on an empty knowledge graph")
+        if is_empty:
+            logger.warning("Search attempt on an empty knowledge graph")
 
     retriever_instance = await get_search_type_retriever_instance(
         query_type=query_type, query_text=query_text, **kwargs

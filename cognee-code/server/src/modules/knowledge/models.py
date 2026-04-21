@@ -9,7 +9,10 @@ class DatasetBase(BaseModel):
 
 
 class DatasetCreate(DatasetBase):
-    pass
+    vault_api_key: Optional[str] = Field(
+        default=None,
+        description="Optional per-dataset Muninn vault API key for vector data isolation",
+    )
 
 
 class DatasetUpdate(DatasetBase):

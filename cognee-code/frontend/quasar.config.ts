@@ -11,7 +11,7 @@ export default defineConfig((/* ctx */) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: ['axios', 'sse'],
+    boot: ['axios', 'sse', 'i18n'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.scss'],
@@ -63,6 +63,19 @@ export default defineConfig((/* ctx */) => {
       // viteVuePluginOptions: {},
 
       vitePlugins: [
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        ...(process.env.NODE_ENV === 'development'
+          ? [[
+              'vite-plugin-vue-devtools',
+              {
+                componentInspector: {
+                  cleanHtml: false,
+                },
+              },
+              { client: true },
+            ] as any]
+          : []),
+        /* eslint-enable @typescript-eslint/no-explicit-any */
         [
           'vite-plugin-checker',
           {
@@ -85,6 +98,11 @@ export default defineConfig((/* ctx */) => {
         '/api': {
           target: 'http://localhost:8000',
           changeOrigin: true,
+        },
+        '/opencode': {
+          target: 'http://localhost:4097',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/opencode/, ''),
         }
       }
     },

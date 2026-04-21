@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 from typing import Any, AsyncIterable, AsyncGenerator, Callable, Dict, Union, Awaitable
 from cognee.modules.pipelines.models.PipelineRunInfo import PipelineRunCompleted, PipelineRunErrored
 from cognee.modules.pipelines.queues.pipeline_run_info_queues import push_to_queue
@@ -109,7 +110,10 @@ async def run_pipeline_as_background_process(
         pipeline_list.append(pipeline_run)
 
     # Send all started pipelines to execute one by one in background
-    asyncio.create_task(handle_rest_of_the_run(pipeline_list=pipeline_list))
+    asyncio.create_task(
+        handle_rest_of_the_run(pipeline_list=pipeline_list),
+        context=contextvars.copy_context(),
+    )
 
     return pipeline_run_started_info
 

@@ -3,25 +3,25 @@
     <q-card class="q-pa-lg" style="width: 400px; max-width: 90vw;">
       <q-card-section class="text-center">
         <div class="text-h4 text-primary q-mb-sm">Cognee-Code</div>
-        <div class="text-subtitle1 text-grey">{{ isLogin ? 'Sign In' : 'Create Account' }}</div>
+        <div class="text-subtitle1 text-grey">{{ isLogin ? t('login.signIn') : t('login.createAccount') }}</div>
       </q-card-section>
 
       <q-card-section>
         <q-form @submit.prevent="handleSubmit" class="q-gutter-md">
           <q-input
             v-model="email"
-            label="Email"
+            :label="t('login.email')"
             type="email"
             outlined
-            :rules="[val => !!val || 'Email is required', val => /.+@.+\..+/.test(val) || 'Invalid email']"
+            :rules="[val => !!val || t('login.emailRequired'), val => /.+@.+\..+/.test(val) || t('login.invalidEmail')]"
           />
 
           <q-input
             v-model="password"
-            label="Password"
+            :label="t('login.password')"
             :type="showPassword ? 'text' : 'password'"
             outlined
-            :rules="[val => !!val || 'Password is required', val => val.length >= 6 || 'Min 6 characters']"
+            :rules="[val => !!val || t('login.passwordRequired'), val => val.length >= 6 || t('login.passwordMin')]"
           >
             <template v-slot:append>
               <q-icon
@@ -35,10 +35,10 @@
           <q-input
             v-if="!isLogin"
             v-model="confirmPassword"
-            label="Confirm Password"
+            :label="t('login.confirmPassword')"
             :type="showPassword ? 'text' : 'password'"
             outlined
-            :rules="[val => val === password || 'Passwords do not match']"
+            :rules="[val => val === password || t('login.passwordMismatch')]"
           />
 
           <q-btn
@@ -46,7 +46,7 @@
             color="primary"
             class="full-width"
             size="lg"
-            :label="isLogin ? 'Sign In' : 'Create Account'"
+            :label="isLogin ? t('login.signIn') : t('login.createAccount')"
             :loading="loading"
           />
         </q-form>
@@ -56,13 +56,13 @@
         <q-btn
           flat
           color="primary"
-          :label="isLogin ? 'Need an account? Register' : 'Already have an account? Sign In'"
+          :label="isLogin ? t('login.needAccount') : t('login.haveAccount')"
           @click="isLogin = !isLogin"
         />
       </q-card-section>
 
       <q-card-section v-if="isLogin" class="text-center q-pt-none">
-        <q-btn flat color="grey" label="Forgot Password?" @click="showForgotPassword = true" size="sm" />
+        <q-btn flat color="grey" :label="t('login.forgotPassword')" @click="showForgotPassword = true" size="sm" />
       </q-card-section>
     </q-card>
 
@@ -70,16 +70,16 @@
     <q-dialog v-model="showForgotPassword">
       <q-card style="min-width: 350px">
         <q-card-section>
-          <div class="text-h6">Reset Password</div>
+          <div class="text-h6">{{ t('login.resetPassword') }}</div>
         </q-card-section>
 
         <q-card-section class="q-pt-none">
-          <q-input v-model="resetEmail" label="Email" type="email" outlined />
+          <q-input v-model="resetEmail" :label="t('login.email')" type="email" outlined />
         </q-card-section>
 
         <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="primary" label="Send Reset Link" @click="handleForgotPassword" :loading="resetLoading" />
+          <q-btn flat :label="t('common.cancel')" v-close-popup />
+          <q-btn color="primary" :label="t('login.sendResetLink')" @click="handleForgotPassword" :loading="resetLoading" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -90,10 +90,12 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { AuthService } from 'src/services/auth';
 
 const router = useRouter();
 const $q = useQuasar();
+const { t } = useI18n();
 
 const isLogin = ref(true);
 const email = ref('');
@@ -111,17 +113,17 @@ async function handleSubmit() {
   try {
     if (isLogin.value) {
       await AuthService.login({ username: email.value, password: password.value });
-      $q.notify({ color: 'positive', message: 'Login successful' });
+      $q.notify({ color: 'positive', message: t('login.loginSuccess') });
       void router.push('/');
     } else {
       await AuthService.register({ email: email.value, password: password.value });
-      $q.notify({ color: 'positive', message: 'Account created! Please sign in.' });
+      $q.notify({ color: 'positive', message: t('login.accountCreated') });
       isLogin.value = true;
       password.value = '';
       confirmPassword.value = '';
     }
   } catch (err) {
-    const message = isLogin.value ? 'Login failed. Check your credentials.' : 'Registration failed.';
+    const message = isLogin.value ? t('login.loginFailed') : t('login.registrationFailed');
     $q.notify({ color: 'negative', message });
     console.error(err);
   } finally {
@@ -134,11 +136,11 @@ async function handleForgotPassword() {
   resetLoading.value = true;
   try {
     await AuthService.forgotPassword(resetEmail.value);
-    $q.notify({ color: 'positive', message: 'Reset link sent to your email' });
+    $q.notify({ color: 'positive', message: t('login.resetSent') });
     showForgotPassword.value = false;
     resetEmail.value = '';
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to send reset link' });
+    $q.notify({ color: 'negative', message: t('login.resetFailed') });
   } finally {
     resetLoading.value = false;
   }

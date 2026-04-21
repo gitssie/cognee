@@ -2,9 +2,9 @@
   <div class="column full-height">
     <!-- Header -->
     <q-toolbar class="bg-grey-1">
-      <q-toolbar-title class="text-subtitle1 text-weight-bold">Knowledge Bases</q-toolbar-title>
+      <q-toolbar-title class="text-subtitle1 text-weight-bold">{{ t('knowledge.knowledgeBases') }}</q-toolbar-title>
       <q-btn round flat icon="add" color="primary" @click="$emit('create')">
-        <q-tooltip>Create New Dataset</q-tooltip>
+        <q-tooltip>{{ t('knowledge.createNewDataset') }}</q-tooltip>
       </q-btn>
     </q-toolbar>
 
@@ -12,7 +12,7 @@
 
     <!-- Search -->
     <div class="q-px-md q-py-sm">
-      <q-input dense outlined v-model="search" placeholder="Search..." class="bg-white">
+      <q-input dense outlined v-model="search" :placeholder="t('knowledge.searchPlaceholder')" class="bg-white">
         <template v-slot:append>
           <q-icon name="search" />
         </template>
@@ -81,7 +81,7 @@
                     class="text-negative"
                   >
                     <q-item-section avatar><q-icon name="delete" /></q-item-section>
-                    <q-item-section>Delete</q-item-section>
+                    <q-item-section>{{ t('common.delete') }}</q-item-section>
                   </q-item>
                 </q-list>
               </q-menu>
@@ -90,7 +90,7 @@
         </q-item>
 
         <div v-if="filteredDatasets.length === 0" class="text-center q-pa-md text-grey">
-          No datasets found
+          {{ t('knowledge.noDatasetsFound') }}
         </div>
       </q-list>
     </q-scroll-area>
@@ -101,6 +101,7 @@
 import { ref, computed } from 'vue';
 import { DatasetStatus, type Dataset, type DatasetWithStatus } from 'src/services/knowledge';
 import { date } from 'quasar';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
   datasets: (Dataset | DatasetWithStatus)[];
@@ -115,6 +116,7 @@ defineEmits<{
 }>();
 
 const search = ref('');
+const { t } = useI18n();
 
 const filteredDatasets = computed(() => {
   if (!search.value) return props.datasets;
@@ -153,13 +155,13 @@ function getStatusColor(status: DatasetStatus): string {
 function getStatusLabel(status: DatasetStatus): string {
   switch (status) {
     case DatasetStatus.COMPLETED:
-      return 'Ready';
+      return t('knowledge.ready');
     case DatasetStatus.PROCESSING:
-      return 'Building...';
+      return t('knowledge.building');
     case DatasetStatus.PENDING:
-      return 'Pending';
+      return t('knowledge.pending');
     case DatasetStatus.ERROR:
-      return 'Error';
+      return t('knowledge.error');
     case DatasetStatus.EMPTY:
       return '';
     default:

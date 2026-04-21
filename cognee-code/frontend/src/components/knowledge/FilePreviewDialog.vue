@@ -37,9 +37,9 @@
         <!-- Unsupported Type -->
         <div v-else class="full-height row flex-center column text-grey-6">
           <q-icon name="visibility_off" size="64px" class="q-mb-md" />
-          <div class="text-h6">Preview not available</div>
-          <div class="text-caption">{{ mimeType || 'Unknown file type' }}</div>
-          <q-btn flat color="primary" label="Download to view" icon="download" class="q-mt-md" @click="$emit('download')" />
+          <div class="text-h6">{{ t('filePreview.notAvailable') }}</div>
+          <div class="text-caption">{{ mimeType || t('filePreview.unknownFileType') }}</div>
+          <q-btn flat color="primary" :label="t('filePreview.downloadToView')" icon="download" class="q-mt-md" @click="$emit('download')" />
         </div>
       </q-card-section>
     </q-card>
@@ -48,6 +48,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { MarkdownRender } from 'markstream-vue';
 import 'markstream-vue/index.css';
 
@@ -67,6 +68,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const textContent = ref('');
 const imageUrl = ref('');
+const { t } = useI18n();
 
 const isOpen = computed({
   get: () => props.modelValue,
@@ -134,7 +136,7 @@ watch(() => props.content, async (blob) => {
       }
     }
   } catch (e) {
-    error.value = 'Failed to load file content';
+    error.value = t('filePreview.failedLoadContent');
     console.error('Preview error:', e);
   } finally {
     loading.value = false;

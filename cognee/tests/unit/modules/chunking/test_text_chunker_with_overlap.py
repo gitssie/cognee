@@ -322,3 +322,31 @@ async def test_paragraph_chunking_with_overlap(make_text_generator):
         f"Chunk 1 ends with: {chunk_1_end_words}, "
         f"Chunk 2 starts with: {chunk_2_words[:6]}"
     )
+
+
+@pytest.mark.asyncio
+async def test_overlap_chunker_respects_max_text_length_for_long_single_line_text(
+    make_text_generator,
+):
+    text = "甲" * 20000
+    document = Document(
+        id=uuid4(),
+        name="test_document",
+        raw_data_location="/test/path",
+        external_metadata=None,
+        mime_type="text/plain",
+    )
+    get_text = make_text_generator(text)
+    chunker = TextChunkerWithOverlap(
+        document,
+        get_text,
+        max_chunk_size=1024,
+        chunk_overlap_ratio=0.08,
+    )
+    chunker.max_text_length = 16384
+
+    chunks = [chunk async for chunk in chunker.read()]
+
+    assert len(chunks) > 1
+    assert all(len(chunk.text.encode("utf-8")) <= 16384 for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks) == text

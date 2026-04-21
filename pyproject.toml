@@ -85,7 +85,7 @@ scraping = [
 neo4j = ["neo4j>=5.28.0,<6"]
 neptune = ["langchain_aws>=0.2.22"]
 postgres = [
-    "psycopg2>=2.9.10,<3",
+    "psycopg2-binary>=2.9.10,<3.0.0",
     "pgvector>=0.3.5,<0.4",
     "asyncpg>=0.30.0,<1.0.0",
 ]

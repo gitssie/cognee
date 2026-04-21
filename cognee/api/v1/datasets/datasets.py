@@ -3,6 +3,7 @@ from uuid import UUID
 from typing import Optional
 
 from cognee.context_global_variables import set_database_global_context_variables
+from cognee.infrastructure.databases.vector import get_vector_engine
 from cognee.modules.users.models import User
 from cognee.modules.users.methods import get_default_user
 from cognee.modules.users.exceptions import PermissionDeniedError
@@ -43,6 +44,14 @@ class datasets:
         await cognee.datasets.delete_data(dataset_id=dataset_id, data_id=data_id)
         ```
     """
+
+    @staticmethod
+    async def _delete_vector_data_points_by_data_id(data_id: UUID) -> None:
+        vector_engine = get_vector_engine()
+        delete_by_data_id = getattr(vector_engine, "delete_data_points_by_data_id", None)
+
+        if callable(delete_by_data_id):
+            await delete_by_data_id("DocumentChunk_text", data_id)
 
     @staticmethod
     async def list_datasets(user: Optional[User] = None):
@@ -149,6 +158,7 @@ class datasets:
             # If data is not found in the system, user is using a custom graph model.
             await set_database_global_context_variables(dataset_id, dataset.owner_id)
             await delete_data_nodes_and_edges(dataset_id, data_id, user.id)
+            await datasets._delete_vector_data_points_by_data_id(data_id)
 
             dataset_data = await get_dataset_data(dataset.id)
             if not dataset_data and delete_dataset_if_empty:
@@ -165,6 +175,8 @@ class datasets:
             await legacy_delete(data, "soft")
         else:
             await delete_data_nodes_and_edges(dataset_id, data_id, user.id)
+
+        await datasets._delete_vector_data_points_by_data_id(data_id)
 
         await delete_data(data, dataset_id)
 

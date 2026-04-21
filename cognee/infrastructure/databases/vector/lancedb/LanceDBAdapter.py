@@ -246,6 +246,8 @@ class LanceDBAdapter(VectorDBInterface):
         normalized: bool = True,
         include_payload: bool = False,
         node_name: Optional[List[str]] = None,
+        recall_mode: Optional[str] = None,
+        threshold: Optional[float] = None,
     ):
         with new_span("cognee.db.vector.search") as otel_span:
             otel_span.set_attribute(COGNEE_DB_SYSTEM, "lancedb")

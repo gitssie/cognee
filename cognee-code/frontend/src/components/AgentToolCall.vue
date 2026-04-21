@@ -1,7 +1,17 @@
 <template>
-  <div class="tool-call-item" :class="`status-${part.state.status}`">
+  <div
+    class="tool-call-item"
+    :class="[
+      {
+        'tool-call-item--attention': isAttention,
+        'tool-call-item--task': isTaskTool,
+        'tool-call-item--clickable': isTaskTool && !!childSessionId,
+      },
+      `status-${part.state.status}`,
+    ]"
+  >
     <!-- Header row -->
-    <div class="tool-call-header row items-center no-wrap" @click="open = !open">
+    <div class="tool-call-header row items-center no-wrap" :class="{ 'tool-call-header--task': isTaskTool }" @click="handleHeaderClick">
 
       <!-- Status indicator -->
       <div class="status-dot-wrap q-mr-sm flex-shrink-0">
@@ -12,19 +22,32 @@
       </div>
 
       <!-- Tool name badge -->
-      <span class="tool-badge q-mr-sm flex-shrink-0">{{ part.tool }}</span>
+      <span v-if="!isTaskTool" class="tool-badge q-mr-sm flex-shrink-0">{{ part.tool }}</span>
+
+      <q-icon v-else name="account_tree" size="16px" color="primary" class="q-mr-sm flex-shrink-0" />
 
       <!-- Title text (truncated, takes remaining space) -->
-      <span v-if="titleText" class="tool-title col">{{ titleText }}</span>
-      <div v-else class="col" />
+      <div class="col min-width-0">
+        <div v-if="taskLabel" class="tool-title tool-title--task ellipsis">{{ taskLabel }}</div>
+        <span v-if="titleText" class="tool-title" :class="{ 'tool-title--task-subtitle': isTaskTool }">{{ titleText }}</span>
+      </div>
 
       <!-- Duration badge when completed -->
       <span v-if="part.state.status === 'completed' && durationText" class="duration-badge q-mr-sm flex-shrink-0">
         {{ durationText }}
       </span>
 
+      <q-icon
+        v-if="isTaskTool && childSessionId"
+        name="open_in_new"
+        size="15px"
+        color="grey-5"
+        class="flex-shrink-0"
+      />
+
       <!-- Expand/collapse chevron -->
       <q-icon
+        v-if="!isTaskTool"
         :name="open ? 'keyboard_arrow_up' : 'keyboard_arrow_down'"
         size="16px"
         color="grey-5"
@@ -35,11 +58,11 @@
 
     <!-- Expanded detail -->
     <transition name="slide-down">
-      <div v-if="open" class="tool-call-detail">
+      <div v-if="open && !isTaskTool" class="tool-call-detail">
         <!-- Input -->
         <div class="detail-block">
           <div class="detail-label">
-            <q-icon name="input" size="11px" class="q-mr-xs" />Input
+            <q-icon name="input" size="11px" class="q-mr-xs" />{{ t('agentTool.input') }}
           </div>
           <pre class="tool-json">{{ formatJson(part.state.input) }}</pre>
         </div>
@@ -47,15 +70,28 @@
         <!-- Output -->
         <div v-if="part.state.status === 'completed'" class="detail-block">
           <div class="detail-label text-positive">
-            <q-icon name="output" size="11px" class="q-mr-xs" />Output
+            <q-icon name="output" size="11px" class="q-mr-xs" />{{ t('agentTool.output') }}
           </div>
           <pre class="tool-json tool-json--output">{{ part.state.output }}</pre>
+        </div>
+
+        <!-- Attachments -->
+        <div v-if="part.state.status === 'completed' && part.state.attachments?.length" class="detail-block">
+          <div class="detail-label">
+            <q-icon name="attach_file" size="11px" class="q-mr-xs" />{{ t('agentTool.attachments') }}
+          </div>
+          <div class="attachment-list">
+            <div v-for="file in part.state.attachments" :key="file.id" class="attachment-item row items-center no-wrap">
+              <q-icon name="description" size="12px" color="grey-6" class="q-mr-xs" />
+              <span class="text-caption col">{{ file.filename || file.url }}</span>
+            </div>
+          </div>
         </div>
 
         <!-- Error -->
         <div v-if="part.state.status === 'error'" class="detail-block">
           <div class="detail-label text-negative">
-            <q-icon name="error_outline" size="11px" class="q-mr-xs" />Error
+            <q-icon name="error_outline" size="11px" class="q-mr-xs" />{{ t('agentTool.error') }}
           </div>
           <pre class="tool-json tool-json--error">{{ part.state.error }}</pre>
         </div>
@@ -65,15 +101,39 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { ToolPart } from '@opencode-ai/sdk/v2';
 
 interface Props {
   part: ToolPart;
+  attentionCallId?: string | null;
+  childSessionLabel?: string | null;
 }
+
+const emit = defineEmits<{
+  (e: 'open-child-session', sessionId: string): void;
+}>();
 
 const props = defineProps<Props>();
 const open = ref(false);
+const { t } = useI18n();
+
+const isTaskTool = computed(() => props.part.tool === 'task');
+
+const childSessionId = computed(() => {
+  const metadata = (props.part.state as { metadata?: Record<string, unknown> }).metadata;
+  const value = metadata?.sessionId;
+  return typeof value === 'string' && value ? value : '';
+});
+
+const taskLabel = computed(() => {
+  if (!isTaskTool.value) return '';
+
+  const input = props.part.state.input ?? {};
+  const subagent = typeof input.subagent_type === 'string' ? input.subagent_type : '';
+  return props.childSessionLabel?.trim() || subagent || t('agent.subsession');
+});
 
 const toolIcon = computed(() => {
   const tool = props.part.tool.toLowerCase();
@@ -89,9 +149,34 @@ const toolIcon = computed(() => {
 
 const titleText = computed(() => {
   const state = props.part.state;
+  const input = state.input ?? {};
+
+  if (isTaskTool.value) {
+    if (typeof input.description === 'string' && input.description) return input.description;
+    return childSessionId.value;
+  }
+
+  if (props.part.tool === 'read' && typeof input.filePath === 'string') return input.filePath.split('/').at(-1) ?? input.filePath;
+  if (props.part.tool === 'list' && typeof input.path === 'string') return input.path.split('/').at(-1) ?? input.path;
+  if ((props.part.tool === 'glob' || props.part.tool === 'grep') && typeof input.pattern === 'string') return input.pattern;
+  if ((props.part.tool === 'webfetch' || props.part.tool === 'websearch' || props.part.tool === 'codesearch') && typeof input.query === 'string') return input.query;
+  if (props.part.tool === 'webfetch' && typeof input.url === 'string') return input.url;
+  if ((props.part.tool === 'task' || props.part.tool === 'bash') && typeof input.description === 'string') return input.description;
+  if ((props.part.tool === 'edit' || props.part.tool === 'write') && typeof input.filePath === 'string') return input.filePath.split('/').at(-1) ?? input.filePath;
+  if (props.part.tool === 'apply_patch' && Array.isArray(input.files) && input.files.length > 0) {
+    return `${input.files.length} file${input.files.length > 1 ? 's' : ''}`;
+  }
   if ((state.status === 'running' || state.status === 'completed') && state.title) return state.title;
   return '';
 });
+
+const isAttention = computed(() => props.attentionCallId === props.part.callID);
+
+watch(isAttention, (next) => {
+  if (next) {
+    open.value = true;
+  }
+}, { immediate: true });
 
 const durationText = computed(() => {
   const state = props.part.state;
@@ -104,11 +189,19 @@ const durationText = computed(() => {
   return `${(ms / 1000).toFixed(1)}s`;
 });
 
+function handleHeaderClick() {
+  if (isTaskTool.value) {
+    if (childSessionId.value) emit('open-child-session', childSessionId.value);
+    return;
+  }
+  open.value = !open.value;
+}
+
 function formatJson(obj: Record<string, unknown>): string {
   try {
     return JSON.stringify(obj, null, 2);
   } catch {
-    return '[unserializable]';
+    return t('agentTool.unserializable');
   }
 }
 </script>
@@ -137,6 +230,21 @@ function formatJson(obj: Record<string, unknown>): string {
   }
 }
 
+.tool-call-item--attention {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.08);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.08);
+}
+
+.tool-call-item--task {
+  border-color: rgba(25, 118, 210, 0.16);
+  background: rgba(25, 118, 210, 0.035);
+}
+
+.tool-call-item--clickable {
+  cursor: pointer;
+}
+
 // ── Header ────────────────────────────────────────────────────────────────────
 .tool-call-header {
   padding: 6px 10px;
@@ -149,6 +257,10 @@ function formatJson(obj: Record<string, unknown>): string {
   &:hover {
     background: rgba(0, 0, 0, 0.035);
   }
+}
+
+.tool-call-header--task {
+  cursor: inherit;
 }
 
 .status-dot-wrap {
@@ -183,6 +295,19 @@ function formatJson(obj: Record<string, unknown>): string {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+.tool-title--task {
+  font-size: 12px;
+  font-weight: 600;
+  color: $primary;
+}
+
+.tool-title--task-subtitle {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 // Duration badge
@@ -225,6 +350,18 @@ function formatJson(obj: Record<string, unknown>): string {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: $grey-6;
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.attachment-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .tool-json {

@@ -42,6 +42,7 @@ class CreateProjectIn(BaseModel):
     remote_url: Optional[str] = None
     local_path: Optional[str] = None
     opencode_project_id: Optional[str] = None
+    vault_api_key: Optional[str] = None
 
 
 class UpdateProjectIn(BaseModel):
@@ -82,6 +83,7 @@ def get_projects_router() -> APIRouter:
             remote_url=body.remote_url,
             local_path=body.local_path,
             opencode_project_id=body.opencode_project_id,
+            vault_api_key=body.vault_api_key,
         )
         return ProjectOut.model_validate(project)
 

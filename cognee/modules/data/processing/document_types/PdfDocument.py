@@ -12,7 +12,12 @@ logger = get_logger("PDFDocument")
 class PdfDocument(Document):
     type: str = "pdf"
 
-    async def read(self, chunker_cls: Chunker, max_chunk_size: int):
+    async def read(
+        self,
+        chunker_cls: Chunker,
+        max_chunk_size: int,
+        max_text_length: int | None = None,
+    ):
         async with open_data_file(self.raw_data_location, mode="rb") as stream:
             logger.info(f"Reading PDF: {self.raw_data_location}")
 
@@ -24,6 +29,7 @@ class PdfDocument(Document):
                     yield page_text
 
             chunker = chunker_cls(self, get_text=get_text, max_chunk_size=max_chunk_size)
+            chunker.max_text_length = max_text_length
 
             async for chunk in chunker.read():
                 yield chunk

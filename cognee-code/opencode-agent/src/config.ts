@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs"
-import { fileURLToPath } from "node:url"
-import { dirname, join } from "node:path"
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const COGNEE_MCP_URL =
     process.env.COGNEE_MCP_URL ?? "http://localhost:8000/mcp/";
@@ -34,15 +34,15 @@ export function buildOpencodeEnv(): NodeJS.ProcessEnv {
 }
 
 function resolveNativeOpencodeBin(): string {
-    if (process.env.OPENCODE_BIN_PATH) return process.env.OPENCODE_BIN_PATH
+    if (process.env.OPENCODE_BIN_PATH) return process.env.OPENCODE_BIN_PATH;
     const candidates = [
         "/root/.bun/install/global/node_modules/opencode-linux-x64/bin/opencode",
         "/root/.bun/install/global/node_modules/opencode-linux-x64-baseline/bin/opencode",
-    ]
+    ];
     for (const c of candidates) {
-        if (existsSync(c)) return c
+        if (existsSync(c)) return c;
     }
-    return "opencode"
+    return "opencode";
 }
 
 function buildOpencodeConfig() {
@@ -73,7 +73,7 @@ function buildOpencodeConfig() {
                 name: "cognee-coder",
                 description:
                     "AI coding assistant with persistent memory backed by the cognee knowledge graph",
-                model: "zhipuai-coding-plan/glm-4.7",
+                model: "github-copilot/gpt-5.4-mini",
                 prompt: [
                     "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.",
                     "",

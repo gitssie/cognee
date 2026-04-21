@@ -79,3 +79,33 @@ def test_chunk_by_paragraph_chunk_numbering(input_text, max_chunk_size, batch_pa
     assert np.all(chunk_indices == np.arange(len(chunk_indices))), (
         f"{chunk_indices = } are not monotonically increasing"
     )
+
+
+def test_chunk_by_paragraph_respects_max_text_length():
+    input_text = "甲" * 20000
+
+    chunks = list(
+        chunk_by_paragraph(
+            data=input_text,
+            max_chunk_size=16384,
+            max_text_length=16384,
+            batch_paragraphs=True,
+        )
+    )
+
+    assert len(chunks) == 2
+    assert all(len(chunk["text"]) <= 16384 for chunk in chunks)
+    assert "".join(chunk["text"] for chunk in chunks) == input_text
+
+
+def test_chunk_by_paragraph_without_max_text_length_keeps_original_behavior():
+    input_text = "甲" * 20000
+
+    with pytest.raises(ValueError):
+        list(
+            chunk_by_paragraph(
+                data=input_text,
+                max_chunk_size=16384,
+                batch_paragraphs=True,
+            )
+        )

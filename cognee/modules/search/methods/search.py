@@ -40,6 +40,8 @@ async def search(
     query_type: SearchType,
     dataset_ids: Union[list[UUID], None],
     user: User,
+    recall_mode: Optional[str] = None,
+    threshold: Optional[float] = None,
     system_prompt_path="answer_simple_question.txt",
     system_prompt: Optional[str] = None,
     top_k: int = 10,
@@ -91,6 +93,8 @@ async def search(
             query_text=query_text,
             user=user,
             dataset_ids=dataset_ids,
+            recall_mode=recall_mode,
+            threshold=threshold,
             system_prompt_path=system_prompt_path,
             system_prompt=system_prompt,
             top_k=top_k,
@@ -128,6 +132,8 @@ async def authorized_search(
     query_text: str,
     user: User,
     dataset_ids: Optional[list[UUID]] = None,
+    recall_mode: Optional[str] = None,
+    threshold: Optional[float] = None,
     system_prompt_path: str = "answer_simple_question.txt",
     system_prompt: Optional[str] = None,
     top_k: int = 10,
@@ -153,6 +159,8 @@ async def authorized_search(
         search_datasets=search_datasets,
         query_type=query_type,
         query_text=query_text,
+        recall_mode=recall_mode,
+        threshold=threshold,
         system_prompt_path=system_prompt_path,
         system_prompt=system_prompt,
         top_k=top_k,
@@ -172,6 +180,8 @@ async def search_in_datasets_context(
     search_datasets: list[Dataset],
     query_type: SearchType,
     query_text: str,
+    recall_mode: Optional[str] = None,
+    threshold: Optional[float] = None,
     system_prompt_path: str = "answer_simple_question.txt",
     system_prompt: Optional[str] = None,
     top_k: int = 10,
@@ -192,6 +202,8 @@ async def search_in_datasets_context(
         dataset: Dataset,
         query_type: SearchType,
         query_text: str,
+        recall_mode: Optional[str] = None,
+        threshold: Optional[float] = None,
         system_prompt_path: str = "answer_simple_question.txt",
         system_prompt: Optional[str] = None,
         top_k: int = 10,
@@ -210,32 +222,35 @@ async def search_in_datasets_context(
             # Set database configuration in async context for each dataset user has access for
             await set_database_global_context_variables(dataset.id, dataset.owner_id)
 
-            # Check if graph for dataset is empty and log warnings if necessary
-            graph_engine = await get_graph_engine()
-            is_empty = await graph_engine.is_empty()
-            if is_empty:
-                # TODO: we can log here, but not all search types use graph. Still keeping this here for reviewer input
-                from cognee.modules.data.methods import get_dataset_data
+            if query_type is not SearchType.MUNINN_RECALL:
+                # Check if graph for dataset is empty and log warnings if necessary
+                graph_engine = await get_graph_engine()
+                is_empty = await graph_engine.is_empty()
+                if is_empty:
+                    # TODO: we can log here, but not all search types use graph. Still keeping this here for reviewer input
+                    from cognee.modules.data.methods import get_dataset_data
 
-                dataset_data = await get_dataset_data(dataset.id)
+                    dataset_data = await get_dataset_data(dataset.id)
 
-                if len(dataset_data) > 0:
-                    logger.warning(
-                        f"Dataset '{dataset.name}' has {len(dataset_data)} data item(s) but the knowledge graph is empty. "
-                        "Please run cognify to process the data before searching."
-                    )
-                else:
-                    logger.warning(
-                        f"Search attempt on an empty knowledge graph - no data has been added to this dataset: {dataset.name}"
-                    )
+                    if len(dataset_data) > 0:
+                        logger.warning(
+                            f"Dataset '{dataset.name}' has {len(dataset_data)} data item(s) but the knowledge graph is empty. "
+                            "Please run cognify to process the data before searching."
+                        )
+                    else:
+                        logger.warning(
+                            f"Search attempt on an empty knowledge graph - no data has been added to this dataset: {dataset.name}"
+                        )
 
-                span.set_attribute("cognee.search.graph_empty", True)
+                    span.set_attribute("cognee.search.graph_empty", True)
 
             # Get retriever output in the context of the current dataset
             return await get_retriever_output(
                 query_type=query_type,
                 query_text=query_text,
                 dataset=dataset,
+                recall_mode=recall_mode,
+                threshold=threshold,
                 system_prompt_path=system_prompt_path,
                 system_prompt=system_prompt,
                 top_k=top_k,
@@ -257,6 +272,8 @@ async def search_in_datasets_context(
                     dataset=dataset,
                     query_type=query_type,
                     query_text=query_text,
+                    recall_mode=recall_mode,
+                    threshold=threshold,
                     system_prompt_path=system_prompt_path,
                     system_prompt=system_prompt,
                     top_k=top_k,
@@ -277,6 +294,8 @@ async def search_in_datasets_context(
                 query_type=query_type,
                 query_text=query_text,
                 dataset=None,
+                recall_mode=recall_mode,
+                threshold=threshold,
                 system_prompt_path=system_prompt_path,
                 system_prompt=system_prompt,
                 top_k=top_k,

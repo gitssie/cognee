@@ -4,9 +4,9 @@
     <!-- Left Panel: Project List -->
     <div class="project-sidebar column">
       <q-toolbar class="bg-grey-1">
-        <q-toolbar-title class="text-subtitle2 text-weight-bold">Projects</q-toolbar-title>
+        <q-toolbar-title class="text-subtitle2 text-weight-bold">{{ t('projects.projects') }}</q-toolbar-title>
         <q-btn flat round dense icon="add" size="sm" @click="showAddProjectDialog = true">
-          <q-tooltip>Add project</q-tooltip>
+          <q-tooltip>{{ t('projects.newProjectTooltip') }}</q-tooltip>
         </q-btn>
       </q-toolbar>
       <q-separator />
@@ -25,16 +25,16 @@
               <q-icon name="public" size="20px" />
             </q-item-section>
             <q-item-section>
-              <q-item-label class="text-weight-medium">Global Rules</q-item-label>
+              <q-item-label class="text-weight-medium">{{ t('projects.globalRules') }}</q-item-label>
               <q-item-label caption :class="selectedProject === null ? 'text-white opacity-70' : 'text-grey-6'">
-                {{ globalRulesCount }} rules
+                {{ globalRulesCount }} {{ t('projects.rules') }}
               </q-item-label>
             </q-item-section>
           </q-item>
 
           <q-separator class="q-my-sm q-mx-md" />
           <q-item-label header class="text-caption text-grey-5 text-uppercase q-py-xs">
-            Git Projects
+            {{ t('projects.myProjects') }}
           </q-item-label>
 
           <!-- Project items -->
@@ -72,7 +72,7 @@
                       <q-item-section avatar>
                         <q-icon name="delete" color="negative" size="18px" />
                       </q-item-section>
-                      <q-item-section>Remove</q-item-section>
+                      <q-item-section>{{ t('shared.remove') }}</q-item-section>
                     </q-item>
                   </q-list>
                 </q-menu>
@@ -82,7 +82,7 @@
 
           <!-- Empty projects state -->
           <div v-if="projects.length === 0" class="q-pa-md text-center text-grey-5 text-caption">
-            No projects yet.<br />Add a Git project to get started.
+            {{ t('projects.noProjectsYet') }}
           </div>
 
         </q-list>
@@ -97,10 +97,10 @@
         <q-icon name="public" v-if="selectedProject === null" class="q-mr-sm text-grey-6" />
         <q-icon name="folder_special" v-else class="q-mr-sm text-grey-6" />
         <q-toolbar-title class="text-subtitle2 text-weight-bold">
-          {{ selectedProject === null ? 'Global Rules' : selectedProject.name }}
+          {{ selectedProject === null ? t('projects.globalRules') : selectedProject.name }}
           <span class="text-weight-regular text-grey-6 q-ml-xs">({{ currentRules.length }})</span>
         </q-toolbar-title>
-        <q-btn color="primary" icon="add" label="Add Rule" size="sm" unelevated @click="showAddRuleDialog = true" />
+        <q-btn color="primary" icon="add" :label="t('projects.addRule')" size="sm" unelevated @click="showAddRuleDialog = true" />
       </q-toolbar>
 
       <q-separator />
@@ -108,7 +108,7 @@
       <!-- Loading State -->
       <div v-if="loadingRules" class="col column flex-center">
         <q-spinner color="primary" size="40px" />
-        <div class="text-caption text-grey-5 q-mt-sm">Loading rules...</div>
+        <div class="text-caption text-grey-5 q-mt-sm">{{ t('projects.loadingRules') }}</div>
       </div>
 
       <!-- Rules Table -->
@@ -124,7 +124,7 @@
             <thead class="thead-sticky text-left">
               <tr>
                 <th style="width: 40px;">#</th>
-                <th>Rule</th>
+                <th>{{ t('projects.addRule') }}</th>
                 <th style="width: 48px;"></th>
               </tr>
             </thead>
@@ -136,7 +136,7 @@
               <td>{{ rule.text }}</td>
               <td>
                 <q-btn flat round dense icon="delete" color="negative" size="sm" @click="handleDeleteRule(rule.id)">
-                  <q-tooltip>Delete rule</q-tooltip>
+                  <q-tooltip>{{ t('projects.deleteRuleTooltip') }}</q-tooltip>
                 </q-btn>
               </td>
             </tr>
@@ -147,12 +147,12 @@
       <!-- Empty State -->
       <div v-else class="col column flex-center text-grey-5">
         <q-icon name="rule" size="56px" color="grey-4" class="q-mb-md" />
-        <div class="text-subtitle2">No rules yet</div>
+        <div class="text-subtitle2">{{ t('projects.noRulesYet') }}</div>
         <div class="text-caption q-mt-xs">
-          {{ selectedProject === null ? 'Add global coding rules for all projects' : 'Add rules specific to this project' }}
+          {{ selectedProject === null ? t('projects.addGlobalRules') : t('projects.addProjectRules') }}
         </div>
         <q-btn
-          outline color="primary" icon="add" label="Add First Rule"
+          outline color="primary" icon="add" :label="t('projects.addFirstRule')"
           class="q-mt-lg" size="sm"
           @click="showAddRuleDialog = true"
         />
@@ -164,7 +164,7 @@
     <q-dialog v-model="showAddProjectDialog">
       <q-card style="min-width: 420px;">
         <q-toolbar>
-          <q-toolbar-title>Add Git Project</q-toolbar-title>
+          <q-toolbar-title>{{ t('projects.newProject') }}</q-toolbar-title>
           <q-btn flat round dense icon="close" @click="showAddProjectDialog = false" />
         </q-toolbar>
         <q-separator />
@@ -172,8 +172,8 @@
           <q-input
             v-model="newProjectUrl"
             outlined dense
-            label="Git Repository"
-            placeholder="https://github.com/org/repo  or  git@github.com:org/repo.git  or  /local/path"
+            :label="t('projects.gitRemoteUrl')"
+            :placeholder="t('projects.gitRemotePlaceholder')"
             hint="http/https/ssh URLs are normalized automatically"
             :error="!!projectUrlError"
             :error-message="projectUrlError"
@@ -181,9 +181,9 @@
           />
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn flat label="Cancel" @click="showAddProjectDialog = false" />
+          <q-btn flat :label="t('common.cancel')" @click="showAddProjectDialog = false" />
           <q-btn
-            unelevated color="primary" label="Add Project"
+            unelevated color="primary" :label="t('projects.newProject')"
             @click="handleAddProject"
             :disable="!newProjectUrl.trim()"
           />
@@ -196,9 +196,9 @@
       <q-card class="column full-height">
         <q-toolbar>
           <q-toolbar-title>
-            Add Rule
+            {{ t('projects.addRuleTitle') }}
             <span class="text-caption text-grey-5 q-ml-sm">
-              → {{ selectedProject === null ? 'Global Rules' : selectedProject.name }}
+              → {{ selectedProject === null ? t('projects.globalRules') : selectedProject.name }}
             </span>
           </q-toolbar-title>
           <q-btn flat round dense icon="close" @click="showAddRuleDialog = false" />
@@ -206,7 +206,7 @@
         <q-separator />
         <q-card-section class="col q-pt-sm" style="overflow: hidden;">
           <div class="text-caption text-grey-6 q-mb-sm">
-            Describe the rule in natural language. The AI will extract the formal rule.
+            {{ t('projects.ruleEditorHint') }}
           </div>
           <MdEditor
             v-model="newRuleText"
@@ -214,13 +214,13 @@
             :preview="false"
             :toolbars="toolbars"
             style="height: calc(100% - 24px);"
-            placeholder="# Rule Title&#10;&#10;Describe your coding rule here...&#10;&#10;```python&#10;# Example&#10;def good_function():&#10;    pass&#10;```"
+            :placeholder="t('projects.ruleEditorPlaceholder')"
           />
         </q-card-section>
         <q-card-actions align="right" class="q-pt-none">
-          <q-btn flat label="Cancel" @click="showAddRuleDialog = false" />
+          <q-btn flat :label="t('common.cancel')" @click="showAddRuleDialog = false" />
           <q-btn
-            unelevated color="primary" label="Add Rule"
+            unelevated color="primary" :label="t('projects.addRule')"
             @click="handleAddRule"
             :loading="addingRule"
             :disable="!newRuleText.trim()"
@@ -235,11 +235,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { MdEditor, type ToolbarNames } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { RulesService, type Rule } from 'src/services/rules';
 
 const $q = useQuasar();
+const { t } = useI18n();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -305,7 +307,7 @@ async function fetchRules(gitUrl: string | null) {
     rulesCache.value = new Map(rulesCache.value);
   } catch (err) {
     console.error('Failed to fetch rules', err);
-    $q.notify({ color: 'negative', message: 'Failed to load rules' });
+    $q.notify({ color: 'negative', message: t('projects.failedLoadRules') });
   } finally {
     loadingRules.value = false;
   }
@@ -387,14 +389,14 @@ function handleAddProject() {
   const isNetwork = /^(https?:\/\/|git@)/.test(raw);
   const isLocalPath = raw.startsWith('/') || /^[A-Za-z]:[/\\]/.test(raw);
   if (!isNetwork && !isLocalPath) {
-    projectUrlError.value = 'Please enter a Git remote URL (https/ssh) or an absolute local path';
+    projectUrlError.value = t('projects.invalidGitUrl');
     return;
   }
 
   const url = canonicalizeGitUrl(raw);
 
   if (projects.value.some((p) => p.gitUrl === url)) {
-    projectUrlError.value = 'This project is already added';
+    projectUrlError.value = t('projects.projectAlreadyAdded');
     return;
   }
 
@@ -406,13 +408,13 @@ function handleAddProject() {
   projectUrlError.value = '';
   showAddProjectDialog.value = false;
 
-  $q.notify({ color: 'positive', message: `Project "${newProject.name}" added` });
+  $q.notify({ color: 'positive', message: t('projects.projectCreated', { name: newProject.name }) });
 }
 
 function removeProject(project: Project) {
   $q.dialog({
-    title: 'Remove Project',
-    message: `Remove "${project.name}" from the list? Rules will not be deleted.`,
+    title: t('shared.remove'),
+    message: t('projects.removeProjectConfirm', { name: project.name }),
     cancel: true,
     persistent: false,
   }).onOk(() => {
@@ -422,7 +424,7 @@ function removeProject(project: Project) {
     if (selectedProject.value?.gitUrl === project.gitUrl) {
       selectedProject.value = null;
     }
-    $q.notify({ color: 'info', message: `Project "${project.name}" removed` });
+    $q.notify({ color: 'info', message: t('projects.projectRemoved', { name: project.name }) });
   });
 }
 
@@ -439,10 +441,10 @@ async function handleAddRule() {
     await fetchRules(cacheKey.value);
     showAddRuleDialog.value = false;
     newRuleText.value = '';
-    $q.notify({ color: 'positive', message: 'Rule added' });
+    $q.notify({ color: 'positive', message: t('projects.ruleAdded') });
   } catch (err) {
     console.error('Failed to add rule', err);
-    $q.notify({ color: 'negative', message: 'Failed to add rule' });
+    $q.notify({ color: 'negative', message: t('projects.failedAddRule') });
   } finally {
     addingRule.value = false;
   }
@@ -456,10 +458,10 @@ async function handleDeleteRule(ruleId: string) {
     const updated = (rulesCache.value.get(key) ?? []).filter((r) => r.id !== ruleId);
     rulesCache.value.set(key, updated);
     rulesCache.value = new Map(rulesCache.value);
-    $q.notify({ color: 'positive', message: 'Rule deleted' });
+    $q.notify({ color: 'positive', message: t('projects.ruleDeleted') });
   } catch (err) {
     console.error('Failed to delete rule', err);
-    $q.notify({ color: 'negative', message: 'Failed to delete rule' });
+    $q.notify({ color: 'negative', message: t('projects.failedDeleteRule') });
   }
 }
 

@@ -2,6 +2,7 @@ import io
 import os.path
 from typing import BinaryIO, TypedDict, Optional
 from pathlib import Path
+from urllib.parse import unquote
 
 from cognee.shared.logging_utils import get_logger
 from cognee.infrastructure.files.utils.get_file_content_hash import get_file_content_hash
@@ -55,9 +56,13 @@ async def get_file_metadata(file: BinaryIO, name: Optional[str] = None) -> FileM
 
     file_type = guess_file_type(file, name)
 
+    normalized_name = unquote(name) if isinstance(name, str) else name
+
     file_path = getattr(file, "name", None) or getattr(file, "full_name", None)
 
-    if isinstance(file_path, str):
+    if normalized_name:
+        file_name = Path(normalized_name).stem
+    elif isinstance(file_path, str):
         file_name = Path(file_path).stem if file_path else None
     else:
         # In case file_path does not exist or is a integer return None

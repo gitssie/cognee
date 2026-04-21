@@ -8,7 +8,7 @@
           dense
           round
           icon="menu"
-          aria-label="Menu"
+          :aria-label="t('layout.dashboard')"
           @click="toggleLeftDrawer"
           class="text-grey-7"
         />
@@ -19,6 +19,17 @@
         </q-toolbar-title>
 
         <div class="row items-center q-gutter-sm">
+          <q-select
+            v-model="locale"
+            :options="languageOptions"
+            dense
+            borderless
+            emit-value
+            map-options
+            options-dense
+            style="min-width: 110px"
+            class="text-grey-7"
+          />
           <div class="text-caption text-grey-6">v0.0.1</div>
           <q-btn round flat icon="notifications" color="grey-6" size="sm" />
           <q-avatar size="32px" color="primary" text-color="white" class="shadow-1">
@@ -35,7 +46,7 @@
           header
           class="text-grey-6 text-uppercase text-weight-bold q-pl-md font-xs q-mb-sm"
         >
-          Platform
+          {{ t('layout.platform') }}
         </q-item-label>
 
         <q-item
@@ -49,7 +60,7 @@
           <q-item-section avatar>
             <q-icon name="dashboard" />
           </q-item-section>
-          <q-item-section> Dashboard </q-item-section>
+          <q-item-section>{{ t('layout.dashboard') }}</q-item-section>
         </q-item>
 
         <q-item
@@ -62,7 +73,7 @@
           <q-item-section avatar>
             <q-icon name="search" />
           </q-item-section>
-          <q-item-section> Search </q-item-section>
+          <q-item-section>{{ t('layout.search') }}</q-item-section>
         </q-item>
 
         <q-item
@@ -75,7 +86,7 @@
           <q-item-section avatar>
             <q-icon name="library_books" />
           </q-item-section>
-          <q-item-section> Knowledge Base </q-item-section>
+          <q-item-section>{{ t('layout.knowledgeBase') }}</q-item-section>
         </q-item>
 
         <q-item
@@ -88,25 +99,9 @@
           <q-item-section avatar>
             <q-icon name="hub" />
           </q-item-section>
-          <q-item-section> Graph Knowledge </q-item-section>
+          <q-item-section>{{ t('layout.graphKnowledge') }}</q-item-section>
           <q-item-section side>
             <q-badge color="grey-8" label="M2" outline />
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          to="/projects"
-          active-class="bg-primary text-white shadow-md"
-          clickable
-          v-ripple
-          class="q-my-xs q-mx-sm rounded-borders transition-colors"
-        >
-          <q-item-section avatar>
-            <q-icon name="folder_special" />
-          </q-item-section>
-          <q-item-section> Projects </q-item-section>
-          <q-item-section side>
-            <q-badge color="grey-8" label="M3" outline />
           </q-item-section>
         </q-item>
 
@@ -120,7 +115,7 @@
           <q-item-section avatar>
             <q-icon name="smart_toy" />
           </q-item-section>
-          <q-item-section> AI Agents </q-item-section>
+          <q-item-section>{{ t('layout.agents') }}</q-item-section>
           <q-item-section side>
             <q-badge color="grey-8" label="M4" outline />
           </q-item-section>
@@ -132,7 +127,7 @@
           header
           class="text-grey-6 text-uppercase text-weight-bold q-pl-md font-xs q-mb-sm"
         >
-          System
+          {{ t('layout.system') }}
         </q-item-label>
 
         <q-item
@@ -145,7 +140,7 @@
           <q-item-section avatar>
             <q-icon name="settings" />
           </q-item-section>
-          <q-item-section> Settings </q-item-section>
+          <q-item-section>{{ t('layout.settings') }}</q-item-section>
         </q-item>
       </q-list>
     </q-drawer>
@@ -158,8 +153,13 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { localeOptions } from 'src/i18n';
 
 const leftDrawerOpen = ref(false);
+const { t, locale } = useI18n({ useScope: 'global' });
+
+const languageOptions = localeOptions;
 
 function toggleLeftDrawer() {
   leftDrawerOpen.value = !leftDrawerOpen.value;

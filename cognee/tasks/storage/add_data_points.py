@@ -104,7 +104,23 @@ async def add_data_points(
     vector_engine = unified.vector
 
     await graph_engine.add_nodes(nodes)
+
+    # Stamp data_id on nodes so the vector store can tag them for efficient per-document deletion.
+    if data is not None:
+        for node in nodes:
+            node.data_id = data.id
+
     await index_data_points(nodes, vector_engine=vector_engine)
+
+    # Write sequential chunk associations in muninndb so neighboring chunks can
+    # surface during BFS-based recall.  Only MuninnAdapter exposes this method;
+    # other vector backends silently skip this step.
+    if hasattr(vector_engine, "create_chunk_sequence_links"):
+        from cognee.modules.chunking.models.DocumentChunk import DocumentChunk
+
+        chunk_nodes = [n for n in nodes if isinstance(n, DocumentChunk)]
+        if chunk_nodes:
+            await vector_engine.create_chunk_sequence_links("DocumentChunk_text", chunk_nodes)
 
     if user and dataset and data:
         await upsert_nodes(

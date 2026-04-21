@@ -89,6 +89,8 @@ class VectorDBInterface(Protocol):
         with_vector: bool = False,
         include_payload: bool = False,
         node_name: Optional[List[str]] = None,
+        recall_mode: Optional[str] = None,
+        threshold: Optional[float] = None,
     ):
         """
         Perform a search in the specified collection using either a text query or a vector

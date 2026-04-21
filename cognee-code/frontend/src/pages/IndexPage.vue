@@ -2,9 +2,9 @@
   <q-page class="q-pa-lg">
     <div class="row q-col-gutter-lg">
       <div class="col-12 q-mb-md">
-        <div class="text-h4 text-weight-bold q-mb-sm text-dark">Welcome to Cognee Code</div>
+        <div class="text-h4 text-weight-bold q-mb-sm text-dark">{{ t('index.title') }}</div>
         <div class="text-subtitle1 text-grey-7">
-          AI-Assisted Development Platform powered by Knowledge Graphs.
+          {{ t('index.subtitle') }}
         </div>
       </div>
 
@@ -17,20 +17,20 @@
                 <q-avatar color="primary" text-color="white" icon="library_books" font-size="24px" />
               </div>
               <div class="col q-pl-md">
-                <div class="text-h6 text-weight-bold text-dark">Knowledge Base</div>
-                <div class="text-caption text-grey-6">M1 Module</div>
+                <div class="text-h6 text-weight-bold text-dark">{{ t('layout.knowledgeBase') }}</div>
+                <div class="text-caption text-grey-6">M1 {{ t('index.module') }}</div>
               </div>
             </div>
             
             <div class="q-mt-md text-grey-8 leading-relaxed">
-              Upload documents, manage datasets, and prepare your knowledge base for the AI.
+              {{ t('index.knowledgeDescription') }}
             </div>
           </q-card-section>
 
           <q-separator color="grey-2" />
 
           <q-card-actions class="q-pa-md">
-            <q-btn flat color="primary" label="Manage Datasets" icon-right="arrow_forward" class="full-width text-weight-bold" />
+            <q-btn flat color="primary" :label="t('index.manageDatasets')" icon-right="arrow_forward" class="full-width text-weight-bold" />
           </q-card-actions>
         </q-card>
       </div>
@@ -44,20 +44,20 @@
                 <q-avatar color="secondary" text-color="white" icon="hub" font-size="24px" />
               </div>
               <div class="col q-pl-md">
-                <div class="text-h6 text-weight-bold text-dark">Graph View</div>
-                <div class="text-caption text-grey-6">M2 Module</div>
+                <div class="text-h6 text-weight-bold text-dark">{{ t('index.graphView') }}</div>
+                <div class="text-caption text-grey-6">M2 {{ t('index.module') }}</div>
               </div>
             </div>
             
             <div class="q-mt-md text-grey-8 leading-relaxed">
-              Visualize connections between code and docs in an interactive knowledge graph.
+              {{ t('index.graphDescription') }}
             </div>
           </q-card-section>
 
           <q-separator color="grey-2" />
 
           <q-card-actions class="q-pa-md">
-            <q-btn flat color="secondary" label="View Graph" icon-right="arrow_forward" class="full-width text-weight-bold" />
+            <q-btn flat color="secondary" :label="t('index.viewGraph')" icon-right="arrow_forward" class="full-width text-weight-bold" />
           </q-card-actions>
         </q-card>
       </div>
@@ -71,20 +71,20 @@
                 <q-avatar color="accent" text-color="white" icon="smart_toy" font-size="24px" />
               </div>
               <div class="col q-pl-md">
-                <div class="text-h6 text-weight-bold text-dark">AI Agents</div>
-                <div class="text-caption text-grey-6">M4 Module</div>
+                <div class="text-h6 text-weight-bold text-dark">{{ t('layout.agents') }}</div>
+                <div class="text-caption text-grey-6">M4 {{ t('index.module') }}</div>
               </div>
             </div>
             
             <div class="q-mt-md text-grey-8 leading-relaxed">
-              Chat with AI agents powered by your knowledge base.
+              {{ t('index.agentsDescription') }}
             </div>
           </q-card-section>
 
           <q-separator color="grey-2" />
 
           <q-card-actions class="q-pa-md">
-            <q-btn flat color="accent" label="Start Chat" icon-right="arrow_forward" class="full-width text-weight-bold" />
+            <q-btn flat color="accent" :label="t('index.startChat')" icon-right="arrow_forward" class="full-width text-weight-bold" />
           </q-card-actions>
         </q-card>
       </div>
@@ -93,7 +93,9 @@
 </template>
 
 <script setup lang="ts">
-// Logic can be added here
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 </script>
 
 <style lang="scss" scoped>

@@ -37,20 +37,20 @@
         <!-- Empty Selection State -->
         <div v-else class="full-height row flex-center bg-grey-1 text-grey-6 column">
           <q-icon name="library_books" size="80px" color="grey-4" />
-          <div class="text-h5 q-mt-md">Select a Knowledge Base</div>
-          <div class="text-subtitle1 q-mb-lg">Choose from the left sidebar, or create a new one</div>
+          <div class="text-h5 q-mt-md">{{ t('knowledge.selectBase') }}</div>
+          <div class="text-subtitle1 q-mb-lg">{{ t('knowledge.chooseOrCreate') }}</div>
 
           <q-card flat bordered class="q-pa-md" style="max-width: 400px;">
-            <div class="text-subtitle2 text-grey-8 q-mb-sm">Quick Start:</div>
+            <div class="text-subtitle2 text-grey-8 q-mb-sm">{{ t('knowledge.quickStart') }}</div>
             <div class="column q-gutter-sm">
-              <q-btn unelevated color="primary" label="1. Create Knowledge Base" icon="add" @click="showCreateDialog = true" class="full-width" />
-              <div class="text-caption text-grey-6 text-center">Then select it to add files, text or URLs</div>
+              <q-btn unelevated color="primary" :label="`1. ${t('knowledge.createBase')}`" icon="add" @click="showCreateDialog = true" class="full-width" />
+              <div class="text-caption text-grey-6 text-center">{{ t('knowledge.thenSelect') }}</div>
             </div>
           </q-card>
 
           <div class="text-caption text-grey-5 q-mt-lg">
             <q-icon name="info" size="xs" class="q-mr-xs" />
-            After creating a Knowledge Base, click "Add Content" to upload files
+            {{ t('knowledge.afterCreating') }}
           </div>
         </div>
       </div>
@@ -60,6 +60,7 @@
       ref="createDatasetDialogRef"
       v-model="showCreateDialog"
       :loading="creatingDataset"
+      :show-vault-key="vectorDbProvider === 'muninn'"
       @create="createDataset"
     />
 
@@ -89,7 +90,7 @@
     <q-dialog v-model="isCognifying">
       <q-card style="min-width: 350px">
         <q-toolbar>
-          <q-toolbar-title>Building Knowledge Graph</q-toolbar-title>
+          <q-toolbar-title>{{ t('knowledge.buildingGraph') }}</q-toolbar-title>
           <q-btn icon="close" flat round dense v-close-popup />
         </q-toolbar>
 
@@ -103,7 +104,7 @@
             />
             <div class="text-subtitle1">{{ cognifyStatus }}</div>
             <div class="text-caption text-grey-6 q-mt-sm">
-              Processing continues in background. You can close this dialog.
+              {{ t('knowledge.processingContinues') }}
             </div>
           </div>
         </q-card-section>
@@ -113,27 +114,58 @@
     <!-- Auto-Cognify Prompt Dialog -->
     <q-dialog v-model="showCognifyPrompt">
       <q-card style="min-width: 400px">
-        <q-card-section>
-          <div class="text-h6">Build Knowledge Graph?</div>
-        </q-card-section>
+        <q-toolbar class="bg-grey-1">
+          <q-toolbar-title>{{ t('knowledge.buildGraph') }}</q-toolbar-title>
+          <q-btn flat round dense icon="close" v-close-popup />
+        </q-toolbar>
+        <q-separator />
 
         <q-card-section class="q-pt-none">
           <div class="text-body1">
-            You've added new content to <strong>{{ currentDataset?.name }}</strong>.
+            {{ t('knowledge.addedNewContent', { name: currentDataset?.name ?? '' }) }}
           </div>
           <div class="text-body2 text-grey-7 q-mt-sm">
-            Run Cognify to process the data and make it searchable. This will:
+            {{ t('knowledge.runCognify') }}
           </div>
           <ul class="text-body2 text-grey-7 q-mt-xs">
-            <li>Extract entities and relationships</li>
-            <li>Build the knowledge graph</li>
-            <li>Enable semantic search</li>
+            <li>{{ t('knowledge.extractEntities') }}</li>
+            <li>{{ t('knowledge.buildKnowledgeGraph') }}</li>
+            <li>{{ t('knowledge.enableSemanticSearch') }}</li>
           </ul>
+
+          <div v-if="isMuninnProvider" class="q-mt-md q-gutter-sm">
+            <div class="text-subtitle2">{{ t('knowledge.muninnChunkSettings') }}</div>
+            <q-input
+              v-model.number="muninnChunkSize"
+              type="number"
+              dense
+              outlined
+              :label="t('knowledge.chunkSize')"
+              :hint="t('knowledge.chunkSizeHint')"
+            />
+            <q-input
+              v-model.number="muninnChunkOverlapRatio"
+              type="number"
+              dense
+              outlined
+              :label="t('knowledge.chunkOverlapRatio')"
+              :hint="t('knowledge.chunkOverlapHint')"
+              :step="0.01"
+            />
+            <q-input
+              v-model.number="muninnMaxTextLength"
+              type="number"
+              dense
+              outlined
+              :label="t('knowledge.maxTextLength')"
+              :hint="t('knowledge.maxTextLengthHint')"
+            />
+          </div>
         </q-card-section>
 
         <q-card-actions align="right">
-          <q-btn flat label="Later" color="grey" v-close-popup />
-          <q-btn unelevated label="Build Now" color="secondary" icon="auto_graph" @click="handleCognifyFromPrompt" />
+          <q-btn flat :label="t('common.later')" color="grey" v-close-popup />
+          <q-btn unelevated :label="t('common.buildNow')" color="secondary" icon="auto_graph" @click="handleCognifyFromPrompt" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -144,10 +176,11 @@
 import { ref, computed, inject, onMounted, onUnmounted } from 'vue';
 import { useQuasar } from 'quasar';
 import type { EventBus } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { KnowledgeService, DatasetStatus } from 'src/services/knowledge';
-import type { Dataset, DataItem, DatasetWithStatus, PipelineRunStatus } from 'src/services/knowledge';
+import type { Dataset, DataItem, DatasetWithStatus, PipelineRunStatus, RuntimeConfig } from 'src/services/knowledge';
 import { CognifyService } from 'src/services/cognify';
-import type { PipelineRunInfo } from 'src/services/cognify';
+import type { CognifyOptions } from 'src/services/cognify';
 import type { PipelineEventPayload } from 'src/services/sse';
 import DatasetList from 'components/knowledge/DatasetList.vue';
 import DataList from 'components/knowledge/DataList.vue';
@@ -157,12 +190,18 @@ import ShareDatasetDialog from 'components/knowledge/ShareDatasetDialog.vue';
 import FilePreviewDialog from 'components/knowledge/FilePreviewDialog.vue';
 
 const $q = useQuasar();
+const { t } = useI18n();
 const bus = inject<EventBus>('sseBus')!;
 
 // Dialog refs for controlled closing after successful operations
 const createDatasetDialogRef = ref<InstanceType<typeof CreateDatasetDialog> | null>(null);
 const addDataDialogRef = ref<InstanceType<typeof AddDataDialog> | null>(null);
 
+const MUNINN_DEFAULT_CHUNK_SIZE = 4096;
+const MUNINN_DEFAULT_CHUNK_OVERLAP_RATIO = 0.08;
+const MUNINN_DEFAULT_MAX_TEXT_LENGTH = 16384;
+
+const vectorDbProvider = ref<string>('');
 const datasets = ref<DatasetWithStatus[]>([]);
 const currentDataset = ref<DatasetWithStatus | null>(null);
 const dataItems = ref<DataItem[]>([]);
@@ -173,6 +212,9 @@ const showCreateDialog = ref(false);
 const showAddDataDialog = ref(false);
 const showShareDialog = ref(false);
 const showCognifyPrompt = ref(false);
+const muninnChunkSize = ref<number>(MUNINN_DEFAULT_CHUNK_SIZE);
+const muninnChunkOverlapRatio = ref<number>(MUNINN_DEFAULT_CHUNK_OVERLAP_RATIO);
+const muninnMaxTextLength = ref<number>(MUNINN_DEFAULT_MAX_TEXT_LENGTH);
 
 // Preview state
 const showPreviewDialog = ref(false);
@@ -198,6 +240,31 @@ const currentDatasetStatus = computed(() => {
   return currentDataset.value.status || DatasetStatus.PENDING;
 });
 
+const isMuninnProvider = computed(() => vectorDbProvider.value === 'muninn');
+
+function getCognifyOptions(): CognifyOptions | undefined {
+  if (!isMuninnProvider.value) {
+    return undefined;
+  }
+
+  return {
+    chunkSize: muninnChunkSize.value,
+    chunkOverlapRatio: muninnChunkOverlapRatio.value,
+    maxTextLength: muninnMaxTextLength.value,
+  };
+}
+
+function applyMuninnDefaults(cfg: RuntimeConfig) {
+  const muninn = cfg.muninn;
+  if (!muninn) {
+    return;
+  }
+
+  muninnChunkSize.value = muninn.default_chunk_size;
+  muninnChunkOverlapRatio.value = muninn.default_chunk_overlap_ratio;
+  muninnMaxTextLength.value = muninn.max_text_length;
+}
+
 async function loadDatasets() {
   try {
     loading.value = true;
@@ -212,7 +279,7 @@ async function loadDatasets() {
       }
     }
   } catch {
-    $q.notify({ type: 'negative', message: 'Failed to load datasets' });
+    $q.notify({ type: 'negative', message: t('knowledge.failedLoadDatasets') });
   } finally {
     loading.value = false;
   }
@@ -345,10 +412,13 @@ function stopPipelineListeners() {
   if (onPipelineError)  { bus.off('pipeline:error',  onPipelineError);  onPipelineError = null; }
 }
 
-async function createDataset(name: string) {
+async function createDataset(
+  name: string,
+  vaultApiKey: string | null,
+) {
   try {
     creatingDataset.value = true;
-    const newDs = await KnowledgeService.createDataset(name);
+    const newDs = await KnowledgeService.createDataset(name, vaultApiKey);
     await loadDatasets();
     // Find the enriched version
     const enriched = datasets.value.find(d => d.id === newDs.id);
@@ -471,7 +541,7 @@ function promptForCognify() {
 
 function handleCognifyFromPrompt() {
   showCognifyPrompt.value = false;
-  void handleCognify();
+  void startCognify();
 }
 
 function confirmDeleteData(dataId: string) {
@@ -557,6 +627,15 @@ async function handleResetStatus() {
 }
 
 async function handleCognify() {
+  if (isMuninnProvider.value) {
+    showCognifyPrompt.value = true;
+    return;
+  }
+
+  await startCognify();
+}
+
+async function startCognify() {
   if (!currentDataset.value) return;
 
   try {
@@ -566,11 +645,9 @@ async function handleCognify() {
     // Don't update local status here - let the backend status be the source of truth
     // The WebSocket will send real-time status updates
 
-    // In background mode, response is list of PipelineRunInfo
-    const result = await CognifyService.cognify(currentDataset.value.id);
+    const result = await CognifyService.cognify(currentDataset.value.id, getCognifyOptions());
 
     if (result && result.length > 0 && result[0]) {
-      // In background mode, result is a list
       const info = result[0];
       const runId = info.pipeline_run_id;
 
@@ -583,29 +660,9 @@ async function handleCognify() {
       } else {
         activeCognifyRunId = runId;
       }
-    } else if (typeof result === 'object' && result !== null) {
-       // Just in case it returns the dict format (datasetId -> info)
-       const values = Object.values(result as unknown as Record<string, PipelineRunInfo>);
-       if (values.length > 0 && values[0]) {
-           const info = values[0];
-           const runId = info.pipeline_run_id;
-
-           // Check if pipeline already completed
-           if (info.status === 'PipelineRunCompleted') {
-             $q.notify({ type: 'info', message: 'All data already processed.' });
-             isCognifying.value = false;
-             void refreshDatasetStatus();
-             void loadData(currentDataset.value.id);
-           } else {
-             activeCognifyRunId = runId;
-           }
-       } else {
-           $q.notify({ type: 'warning', message: 'No pipeline info returned.' });
-           isCognifying.value = false;
-       }
     } else {
-        $q.notify({ type: 'warning', message: 'Unexpected response format.' });
-        isCognifying.value = false;
+      $q.notify({ type: 'warning', message: 'No pipeline info returned.' });
+      isCognifying.value = false;
     }
   } catch (err) {
     console.error(err);
@@ -626,6 +683,10 @@ function formatStatus(status: string): string {
 onMounted(() => {
   startPipelineListeners();
   void loadDatasets();
+  void KnowledgeService.getConfig().then(cfg => {
+    vectorDbProvider.value = cfg.vector_db_provider;
+    applyMuninnDefaults(cfg);
+  }).catch(() => { /* non-critical */ });
 });
 
 onUnmounted(() => {

@@ -11,6 +11,7 @@ from cognee.modules.search.exceptions import UnsupportedSearchTypeError
 
 # Retrievers
 from cognee.modules.retrieval.chunks_retriever import ChunksRetriever
+from cognee.modules.retrieval.muninn_recall_retriever import MuninnRecallRetriever
 from cognee.modules.retrieval.summaries_retriever import SummariesRetriever
 from cognee.modules.retrieval.completion_retriever import CompletionRetriever
 from cognee.modules.retrieval.graph_completion_retriever import GraphCompletionRetriever
@@ -59,9 +60,20 @@ async def get_search_type_retriever_instance(
     wide_search_top_k = kwargs.get("wide_search_top_k", 100)
     triplet_distance_penalty = kwargs.get("triplet_distance_penalty", 3.5)
     session_id = kwargs.get("session_id")
+    recall_mode = kwargs.get("recall_mode", "balanced")
+    threshold = kwargs.get("threshold", 0.0)
 
     # Registry mapping search types to their corresponding retriever classes and input parameters
     search_core_registry: dict[SearchType, Tuple[BaseRetriever, dict]] = {
+        SearchType.MUNINN_RECALL: (
+            MuninnRecallRetriever,
+            {
+                "top_k": top_k,
+                "node_name": node_name,
+                "recall_mode": recall_mode,
+                "threshold": threshold,
+            },
+        ),
         SearchType.SUMMARIES: (SummariesRetriever, {"top_k": top_k, "session_id": session_id}),
         SearchType.CHUNKS: (
             ChunksRetriever,

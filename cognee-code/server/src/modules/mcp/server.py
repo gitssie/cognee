@@ -12,7 +12,6 @@ inside the same Python process as the FastAPI server.
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from contextlib import asynccontextmanager, redirect_stdout
 from typing import Any, Optional
@@ -135,7 +134,6 @@ async def cognify(
 @mcp.tool()
 async def search(
     search_query: str,
-    search_type: str,
     top_k: int = 10,
     datasets: Optional[list[str]] = None,
 ) -> list[types.TextContent]:
@@ -146,9 +144,6 @@ async def search(
     ----------
     search_query:
         Natural-language question or search query.
-    search_type:
-        One of: GRAPH_COMPLETION, RAG_COMPLETION, CHUNKS, SUMMARIES, CODE,
-        CYPHER, FEELING_LUCKY.
     top_k:
         Maximum number of results to return (default 10).
     datasets:
@@ -160,7 +155,7 @@ async def search(
 
     with redirect_stdout(sys.stderr):
         kwargs: dict[str, Any] = dict(
-            query_type=SearchType[search_type.upper()],
+            query_type=SearchType.CHUNKS,
             query_text=search_query,
             top_k=top_k,
         )
@@ -168,18 +163,7 @@ async def search(
             kwargs["datasets"] = datasets
         results = await cognee.search(**kwargs)
 
-    stype = search_type.upper()
-    if stype in ("GRAPH_COMPLETION", "RAG_COMPLETION"):
-        # Extract only the search result text, omitting dataset metadata
-        if results:
-            first = results[0]
-            text = first.get("search_result", str(first)) if isinstance(first, dict) else str(first)
-        else:
-            text = ""
-    elif stype == "CODE":
-        text = json.dumps(results, cls=JSONEncoder)
-    else:
-        text = str(results)
+    text = str(results)
 
     return [types.TextContent(type="text", text=text)]
 

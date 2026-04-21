@@ -109,16 +109,42 @@ export interface DatasetStatusDetailsResponse {
   [datasetId: string]: DatasetStatusDetailInfo;
 }
 
+export interface RuntimeConfig {
+  vector_db_provider: string;
+  muninn?: {
+    default_chunk_size: number;
+    default_chunk_overlap_ratio: number;
+    max_text_length: number;
+  };
+}
+
 export const KnowledgeService = {
+  // Config
+  async getConfig(): Promise<RuntimeConfig> {
+    const response = await api.get<RuntimeConfig>('/config');
+    return response.data;
+  },
+
   // Datasets
   async getDatasets(): Promise<Dataset[]> {
     const response = await api.get<Dataset[]>('/datasets');
     return response.data;
   },
 
-  async createDataset(name: string): Promise<Dataset> {
+  async createDataset(
+    name: string,
+    vaultApiKey?: string | null,
+  ): Promise<Dataset> {
     const response = await api.post<Dataset>('/datasets', { name });
-    return response.data;
+    const dataset = response.data;
+
+    if (vaultApiKey) {
+      await api.post(`/datasets/${dataset.id}/vault-key`, {
+        vault_api_key: vaultApiKey,
+      });
+    }
+
+    return dataset;
   },
 
   async deleteDataset(id: string): Promise<void> {

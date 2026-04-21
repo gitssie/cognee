@@ -2,7 +2,7 @@
   <div class="agent-question-dock">
     <!-- Header: "1 of N questions" + progress dots -->
     <div class="question-header row items-center no-wrap q-px-sm q-pt-xs">
-      <span class="text-caption text-grey-6 col">{{ tabIndex + 1 }} of {{ total }} question{{ total > 1 ? 's' : '' }}</span>
+      <span class="text-caption text-grey-6 col">{{ t('agentQuestion.questionCount', { current: tabIndex + 1, total }) }}</span>
       <div class="row q-gutter-xs">
         <button
           v-for="(_, i) in questions"
@@ -21,7 +21,7 @@
     <div class="question-body q-px-sm q-py-xs">
       <div class="text-body2 text-weight-medium q-mb-xs">{{ currentQuestion.question }}</div>
       <div class="text-caption text-grey-5 q-mb-sm">
-        {{ currentQuestion.multiple ? 'Select all that apply' : 'Select one' }}
+        {{ currentQuestion.multiple ? t('agentQuestion.selectAll') : t('agentQuestion.selectOne') }}
       </div>
 
       <!-- Options list -->
@@ -78,8 +78,8 @@
               />
             </span>
             <span class="option-main">
-              <span class="option-label">Type your own answer</span>
-              <span class="option-description text-caption text-grey-5">{{ customText || 'Enter a custom answer…' }}</span>
+              <span class="option-label">{{ t('agentQuestion.typeOwnAnswer') }}</span>
+              <span class="option-description text-caption text-grey-5">{{ customText || t('agentQuestion.enterCustomAnswer') }}</span>
             </span>
           </button>
 
@@ -99,11 +99,11 @@
               />
             </span>
             <span class="option-main">
-              <span class="option-label">Type your own answer</span>
+              <span class="option-label">{{ t('agentQuestion.typeOwnAnswer') }}</span>
               <q-input
                 v-model="customText"
                 autofocus dense borderless
-                placeholder="Enter a custom answer…"
+                :placeholder="t('agentQuestion.enterCustomAnswer')"
                 class="custom-input"
                 @keydown.enter.prevent="commitCustom"
                 @keydown.esc.prevent="editingCustom = false"
@@ -122,7 +122,7 @@
       <q-btn
         flat no-caps dense
         color="grey-6"
-        label="Dismiss"
+        :label="t('agentQuestion.dismiss')"
         :disable="sending"
         @click="rejectAll"
       />
@@ -132,7 +132,7 @@
           v-if="tabIndex > 0"
           flat no-caps dense
           color="grey-7"
-          label="Back"
+          :label="t('agentQuestion.back')"
           :disable="sending"
           @click="back"
         />
@@ -140,7 +140,7 @@
           no-caps unelevated
           :color="isLast ? 'primary' : 'grey-3'"
           :text-color="isLast ? 'white' : 'grey-7'"
-          :label="isLast ? 'Submit' : 'Next'"
+           :label="isLast ? t('agentQuestion.submit') : t('agentQuestion.next')"
           :loading="sending"
           :disable="sending"
           @click="next"
@@ -152,6 +152,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { QuestionRequest, QuestionAnswer } from '@opencode-ai/sdk/v2';
 
 const props = defineProps<{
@@ -159,6 +160,7 @@ const props = defineProps<{
   onReply: (requestID: string, answers: QuestionAnswer[]) => Promise<void>;
   onReject: (requestID: string) => Promise<void>;
 }>();
+const { t } = useI18n();
 
 // ── State ──────────────────────────────────────────────────────────────────────
 

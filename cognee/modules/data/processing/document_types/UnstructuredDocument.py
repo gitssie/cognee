@@ -11,7 +11,12 @@ from .Document import Document
 class UnstructuredDocument(Document):
     type: str = "unstructured"
 
-    async def read(self, chunker_cls: Chunker, max_chunk_size: int) -> AsyncGenerator[Any, Any]:
+    async def read(
+        self,
+        chunker_cls: Chunker,
+        max_chunk_size: int,
+        max_text_length: int | None = None,
+    ) -> AsyncGenerator[Any, Any]:
         async def get_text():
             try:
                 from unstructured.partition.auto import partition
@@ -31,6 +36,7 @@ class UnstructuredDocument(Document):
                 yield text
 
         chunker = chunker_cls(self, get_text=get_text, max_chunk_size=max_chunk_size)
+        chunker.max_text_length = max_text_length
 
         async for chunk in chunker.read():
             yield chunk

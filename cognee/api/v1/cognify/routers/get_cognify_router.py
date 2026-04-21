@@ -36,6 +36,9 @@ class CognifyPayloadDTO(InDTO):
     datasets: Optional[List[str]] = Field(default=None)
     dataset_ids: Optional[List[UUID]] = Field(default=None, examples=[[]])
     run_in_background: Optional[bool] = Field(default=False)
+    chunk_size: Optional[int] = Field(default=None, ge=1)
+    chunk_overlap_ratio: Optional[float] = Field(default=None, ge=0.0, le=0.95)
+    max_text_length: Optional[int] = Field(default=None, ge=1)
     graph_model: Optional[dict] = Field(default=None, examples=[{}])
     custom_prompt: Optional[str] = Field(
         default="", description="Custom prompt for entity extraction and graph generation"
@@ -155,6 +158,9 @@ def get_cognify_router() -> APIRouter:
                 datasets,
                 user,
                 graph_model=graph_model,
+                chunk_size=payload.chunk_size,
+                chunk_overlap_ratio=payload.chunk_overlap_ratio,
+                max_text_length=payload.max_text_length,
                 config=config_to_use,
                 run_in_background=payload.run_in_background,
                 custom_prompt=payload.custom_prompt,

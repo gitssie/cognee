@@ -1,6 +1,6 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md">Settings</div>
+    <div class="text-h4 q-mb-md">{{ t('settingsPage.title') }}</div>
 
     <q-spinner v-if="loading" color="primary" size="3em" class="q-ma-xl" />
 
@@ -8,31 +8,31 @@
       <!-- LLM Configuration -->
       <q-card class="q-mb-md">
         <q-card-section>
-          <div class="text-h6">LLM Configuration</div>
-          <div class="text-subtitle2 text-grey">Configure your AI provider settings</div>
+          <div class="text-h6">{{ t('settingsPage.llmConfiguration') }}</div>
+          <div class="text-subtitle2 text-grey">{{ t('settingsPage.llmSubtitle') }}</div>
         </q-card-section>
 
         <q-card-section class="q-gutter-md">
           <q-select
             v-model="llmProvider"
             :options="llmProviders"
-            label="Provider"
+            :label="t('settingsPage.provider')"
             outlined
             emit-value
             map-options
           />
           <q-input
             v-model="llmModel"
-            label="Model"
+            :label="t('settingsPage.model')"
             outlined
-            hint="e.g., gpt-4o, claude-3-opus, llama3"
+            :hint="t('settingsPage.modelHint')"
           />
           <q-input
             v-model="llmApiKey"
-            label="API Key"
+            :label="t('settingsPage.apiKey')"
             type="password"
             outlined
-            hint="Leave empty to keep existing key"
+            :hint="t('settingsPage.apiKeyHint')"
           />
         </q-card-section>
       </q-card>
@@ -40,31 +40,31 @@
       <!-- Vector DB Configuration -->
       <q-card class="q-mb-md">
         <q-card-section>
-          <div class="text-h6">Vector Database</div>
-          <div class="text-subtitle2 text-grey">Configure vector storage backend</div>
+          <div class="text-h6">{{ t('settingsPage.vectorDatabase') }}</div>
+          <div class="text-subtitle2 text-grey">{{ t('settingsPage.vectorSubtitle') }}</div>
         </q-card-section>
 
         <q-card-section class="q-gutter-md">
           <q-select
             v-model="vectorProvider"
             :options="vectorProviders"
-            label="Provider"
+            :label="t('settingsPage.provider')"
             outlined
             emit-value
             map-options
           />
           <q-input
             v-model="vectorUrl"
-            label="URL"
+            :label="t('settingsPage.url')"
             outlined
-            hint="Connection URL (if applicable)"
+            :hint="t('settingsPage.urlHint')"
           />
           <q-input
             v-model="vectorApiKey"
-            label="API Key"
+            :label="t('settingsPage.apiKey')"
             type="password"
             outlined
-            hint="Leave empty to keep existing key"
+            :hint="t('settingsPage.apiKeyHint')"
           />
         </q-card-section>
       </q-card>
@@ -72,8 +72,8 @@
       <!-- Sync Status -->
       <q-card class="q-mb-md">
         <q-card-section>
-          <div class="text-h6">Cloud Sync</div>
-          <div class="text-subtitle2 text-grey">Sync data to cloud storage</div>
+          <div class="text-h6">{{ t('settingsPage.cloudSync') }}</div>
+          <div class="text-subtitle2 text-grey">{{ t('settingsPage.cloudSyncSubtitle') }}</div>
         </q-card-section>
 
         <q-card-section>
@@ -83,17 +83,17 @@
                 {{ syncStatus.status }}
               </q-badge>
               <span v-if="syncStatus.last_sync" class="q-ml-sm text-grey">
-                Last sync: {{ syncStatus.last_sync }}
+                {{ t('settingsPage.lastSync', { value: syncStatus.last_sync }) }}
               </span>
             </div>
-            <q-btn color="secondary" label="Sync Now" icon="sync" @click="triggerSync" :loading="syncing" />
+            <q-btn color="secondary" :label="t('settingsPage.syncNow')" icon="sync" @click="triggerSync" :loading="syncing" />
           </div>
         </q-card-section>
       </q-card>
 
       <!-- Save Button -->
       <div class="row justify-end">
-        <q-btn color="primary" label="Save Settings" icon="save" size="lg" @click="saveSettings" :loading="saving" />
+        <q-btn color="primary" :label="t('settingsPage.saveSettings')" icon="save" size="lg" @click="saveSettings" :loading="saving" />
       </div>
     </template>
   </q-page>
@@ -102,10 +102,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { SettingsService, type LLMProvider, type VectorDBProvider, type LLMConfigInput, type VectorDBConfigInput } from 'src/services/settings';
 import { SyncService, type SyncStatus } from 'src/services/sync';
 
 const $q = useQuasar();
+const { t } = useI18n();
 
 const loading = ref(true);
 const saving = ref(false);
@@ -158,7 +160,7 @@ async function loadSettings() {
     // Sync
     syncStatus.value = status;
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to load settings' });
+    $q.notify({ color: 'negative', message: t('settingsPage.failedLoadSettings') });
   } finally {
     loading.value = false;
   }
@@ -179,12 +181,12 @@ async function saveSettings() {
       llm: llmConfig,
       vector_db: vectorConfig,
     });
-    $q.notify({ color: 'positive', message: 'Settings saved successfully' });
+    $q.notify({ color: 'positive', message: t('settingsPage.saved') });
     // Clear sensitive fields
     llmApiKey.value = '';
     vectorApiKey.value = '';
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to save settings' });
+    $q.notify({ color: 'negative', message: t('settingsPage.failedSave') });
   } finally {
     saving.value = false;
   }
@@ -194,11 +196,11 @@ async function triggerSync() {
   syncing.value = true;
   try {
     const result = await SyncService.sync();
-    $q.notify({ color: 'positive', message: result.message || 'Sync started' });
+    $q.notify({ color: 'positive', message: result.message || t('settingsPage.syncStarted') });
     // Refresh status
     syncStatus.value = await SyncService.getStatus().catch(() => null);
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to start sync' });
+    $q.notify({ color: 'negative', message: t('settingsPage.failedSync') });
   } finally {
     syncing.value = false;
   }

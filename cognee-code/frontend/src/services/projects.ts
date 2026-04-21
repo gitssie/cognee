@@ -20,6 +20,7 @@ export interface CreateProjectInput {
   opencode_project_id?: string | null;
   remote_url?: string | null;
   local_path?: string | null;
+  vault_api_key?: string | null;
 }
 
 const api = axios.create({

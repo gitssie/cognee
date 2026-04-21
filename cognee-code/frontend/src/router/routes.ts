@@ -12,7 +12,6 @@ const routes: RouteRecordRaw[] = [
       { path: '', component: () => import('pages/IndexPage.vue') },
       { path: 'knowledge', component: () => import('pages/KnowledgePage.vue') },
       { path: 'graph', component: () => import('pages/GraphKnowledgePage.vue') },
-      { path: 'projects', component: () => import('pages/ProjectsPage.vue') },
       { path: 'notebooks', component: () => import('pages/NotebookPage.vue') },
       { path: 'agents', component: () => import('pages/AgentPage.vue') },
       { path: 'search', component: () => import('pages/SearchPage.vue') },

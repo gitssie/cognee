@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pydantic import BaseModel
 from typing import Union, Optional, List
 from uuid import UUID
@@ -12,6 +13,7 @@ from cognee.infrastructure.llm import get_max_chunk_tokens
 from cognee.modules.pipelines import run_pipeline
 from cognee.modules.pipelines.tasks.task import Task
 from cognee.modules.chunking.TextChunker import TextChunker
+from cognee.modules.chunking.text_chunker_with_overlap import TextChunkerWithOverlap
 from cognee.modules.ontology.ontology_config import Config
 from cognee.modules.ontology.get_default_ontology_resolver import (
     get_default_ontology_resolver,
@@ -23,8 +25,9 @@ from cognee.tasks.documents import (
     classify_documents,
     extract_chunks_from_documents,
 )
+from cognee.tasks.chunks import chunk_by_paragraph
 from cognee.tasks.graph import extract_graph_from_data
-from cognee.tasks.storage import add_data_points
+from cognee.tasks.storage import add_data_points, index_data_points
 from cognee.tasks.summarization import summarize_text
 from cognee.tasks.ingestion.extract_dlt_fk_edges import extract_dlt_fk_edges
 from cognee.modules.pipelines.layers.pipeline_execution_mode import get_pipeline_executor
@@ -33,12 +36,140 @@ from cognee.tasks.temporal_graph.extract_knowledge_graph_from_events import (
     extract_knowledge_graph_from_events,
 )
 from cognee.modules.observability import new_span, COGNEE_PIPELINE_NAME, COGNEE_RESULT_SUMMARY
+from cognee.infrastructure.databases.vector.config import get_vectordb_config
 
 
 logger = get_logger("cognify")
+MUNINN_DEFAULT_CHUNK_SIZE = 4096
+MUNINN_ASCII_HEAVY_CHUNK_SIZE = 6144
+MUNINN_DEFAULT_CHUNK_OVERLAP_RATIO = 0.08
+MUNINN_MAX_ENGRAM_CONTENT_LENGTH = 16384
+
+MUNINN_CJK_CHAR_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+MUNINN_ASCII_WORD_PATTERN = re.compile(r"[A-Za-z0-9_]")
+
+
+def _get_muninn_adaptive_chunk_size(text: str, default_chunk_size: int) -> int:
+    if not text:
+        return default_chunk_size
+
+    sample = text[:4000]
+    cjk_count = len(MUNINN_CJK_CHAR_PATTERN.findall(sample))
+    ascii_count = len(MUNINN_ASCII_WORD_PATTERN.findall(sample))
+    measured = cjk_count + ascii_count
+
+    if measured == 0:
+        return default_chunk_size
+
+    cjk_ratio = cjk_count / measured
+    ascii_ratio = ascii_count / measured
+
+    if cjk_ratio >= 0.2:
+        return default_chunk_size
+
+    if ascii_ratio >= 0.6:
+        return max(default_chunk_size, MUNINN_ASCII_HEAVY_CHUNK_SIZE)
+
+    return default_chunk_size
+
+
+class MuninnTextChunker(TextChunkerWithOverlap):
+    def __init__(self, document, get_text: callable, max_chunk_size: int):
+        super().__init__(
+            document,
+            get_text,
+            max_chunk_size,
+            chunk_overlap_ratio=MUNINN_DEFAULT_CHUNK_OVERLAP_RATIO,
+        )
+
+    async def read(self):
+        async for content_text in self.get_text():
+            effective_chunk_size = _get_muninn_adaptive_chunk_size(
+                content_text,
+                self.max_chunk_size,
+            )
+            self.max_chunk_size = effective_chunk_size
+            self.chunk_overlap = int(effective_chunk_size * self.chunk_overlap_ratio)
+
+            paragraph_max_size = int(0.5 * self.chunk_overlap_ratio * effective_chunk_size)
+            self.get_chunk_data = lambda text, paragraph_max_size=paragraph_max_size: (
+                chunk_by_paragraph(
+                    text,
+                    paragraph_max_size,
+                    max_text_length=self.max_text_length,
+                    batch_paragraphs=True,
+                )
+            )
+
+            for chunk_data in self.get_chunk_data(content_text):
+                if not self._accumulation_overflows(chunk_data):
+                    self._accumulate_chunk_data(chunk_data)
+                    continue
+
+                yield self._emit_chunk(chunk_data)
+
+        if len(self._accumulated_chunk_data) == 0:
+            return
+
+        yield self._create_chunk_from_accumulation()
+
+
+def _build_muninn_text_chunker(chunk_overlap_ratio: float):
+    class ConfiguredMuninnTextChunker(TextChunkerWithOverlap):
+        def __init__(self, document, get_text: callable, max_chunk_size: int):
+            super().__init__(
+                document,
+                get_text,
+                max_chunk_size,
+                chunk_overlap_ratio=chunk_overlap_ratio,
+            )
+
+    ConfiguredMuninnTextChunker.__name__ = "MuninnTextChunker"
+    return ConfiguredMuninnTextChunker
 
 
 update_status_lock = asyncio.Lock()
+
+
+def _get_vector_db_provider(vector_db_config: Optional[dict] = None) -> str:
+    provider = (vector_db_config or {}).get("vector_db_provider")
+    if isinstance(provider, str) and provider:
+        return provider.lower()
+
+    return get_vectordb_config().vector_db_provider.lower()
+
+
+def _get_muninn_chunker(chunker, chunk_overlap_ratio: float | None = None):
+    if chunker is TextChunker:
+        if chunk_overlap_ratio is None:
+            return MuninnTextChunker
+        return _build_muninn_text_chunker(chunk_overlap_ratio)
+
+    return chunker
+
+
+def _get_muninn_tasks(
+    chunker,
+    chunk_size: int = None,
+    chunks_per_batch: int = 1,
+    chunk_overlap_ratio: float | None = None,
+    max_text_length: int | None = None,
+) -> list[Task]:
+    return [
+        Task(classify_documents),
+        Task(
+            extract_chunks_from_documents,
+            # Keep token chunks reasonably small for retrieval quality while still
+            # enforcing Muninn's engram content ceiling at the text level.
+            max_chunk_size=chunk_size or MUNINN_DEFAULT_CHUNK_SIZE,
+            max_text_length=max_text_length or MUNINN_MAX_ENGRAM_CONTENT_LENGTH,
+            chunker=_get_muninn_chunker(chunker, chunk_overlap_ratio),
+        ),
+        Task(
+            index_data_points,
+            task_config={"batch_size": chunks_per_batch},
+        ),
+    ]
 
 
 async def cognify(
@@ -47,6 +178,8 @@ async def cognify(
     graph_model: BaseModel = KnowledgeGraph,
     chunker=TextChunker,
     chunk_size: int = None,
+    chunk_overlap_ratio: float | None = None,
+    max_text_length: int | None = None,
     chunks_per_batch: int = None,
     config: Config = None,
     vector_db_config: dict = None,
@@ -226,7 +359,10 @@ async def cognify(
                 user=user,
                 chunker=chunker,
                 chunk_size=chunk_size,
+                chunk_overlap_ratio=chunk_overlap_ratio,
+                max_text_length=max_text_length,
                 chunks_per_batch=chunks_per_batch,
+                vector_db_config=vector_db_config,
             )
         else:
             tasks = await get_default_tasks(
@@ -234,7 +370,10 @@ async def cognify(
                 graph_model=graph_model,
                 chunker=chunker,
                 chunk_size=chunk_size,
+                chunk_overlap_ratio=chunk_overlap_ratio,
+                max_text_length=max_text_length,
                 config=config,
+                vector_db_config=vector_db_config,
                 custom_prompt=custom_prompt,
                 chunks_per_batch=chunks_per_batch,
                 **kwargs,
@@ -271,7 +410,10 @@ async def get_default_tasks(  # TODO: Find out a better way to do this (Boris's 
     graph_model: BaseModel = KnowledgeGraph,
     chunker=TextChunker,
     chunk_size: int = None,
+    chunk_overlap_ratio: float | None = None,
+    max_text_length: int | None = None,
     config: Config = None,
+    vector_db_config: dict = None,
     custom_prompt: Optional[str] = None,
     chunks_per_batch: int = None,
     **kwargs,
@@ -299,6 +441,15 @@ async def get_default_tasks(  # TODO: Find out a better way to do this (Boris's 
     if chunks_per_batch is None:
         chunks_per_batch = (
             cognify_config.chunks_per_batch if cognify_config.chunks_per_batch is not None else 100
+        )
+
+    if _get_vector_db_provider(vector_db_config) == "muninn":
+        return _get_muninn_tasks(
+            chunker,
+            chunk_size,
+            chunks_per_batch,
+            chunk_overlap_ratio,
+            max_text_length,
         )
 
     default_tasks = [
@@ -332,7 +483,13 @@ async def get_default_tasks(  # TODO: Find out a better way to do this (Boris's 
 
 
 async def get_temporal_tasks(
-    user: User = None, chunker=TextChunker, chunk_size: int = None, chunks_per_batch: int = None
+    user: User = None,
+    chunker=TextChunker,
+    chunk_size: int = None,
+    chunk_overlap_ratio: float | None = None,
+    max_text_length: int | None = None,
+    chunks_per_batch: int = None,
+    vector_db_config: dict = None,
 ) -> list[Task]:
     """
     Builds and returns a list of temporal processing tasks to be executed in sequence.
@@ -358,6 +515,15 @@ async def get_temporal_tasks(
 
         configured = get_cognify_config().chunks_per_batch
         chunks_per_batch = configured if configured is not None else 10
+
+    if _get_vector_db_provider(vector_db_config) == "muninn":
+        return _get_muninn_tasks(
+            chunker,
+            chunk_size,
+            chunks_per_batch,
+            chunk_overlap_ratio,
+            max_text_length,
+        )
 
     temporal_tasks = [
         Task(classify_documents),

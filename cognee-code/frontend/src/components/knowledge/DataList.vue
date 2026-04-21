@@ -16,13 +16,13 @@
           <q-skeleton v-if="loading" type="QBadge" class="q-ml-sm" />
         </div>
         <div class="text-caption text-grey-8">
-          <span v-if="!loading">{{ dataItems.length }} items</span>
+          <span v-if="!loading">{{ t('knowledge.itemsCount', { count: dataItems.length }) }}</span>
           <q-skeleton v-else type="text" width="60px" />
         </div>
       </div>
       <q-space />
       <div class="row q-gutter-sm">
-        <q-input dense outlined v-model="filter" placeholder="Filter files..." bg-color="white">
+        <q-input dense outlined v-model="filter" :placeholder="t('knowledge.filterFiles')" bg-color="white">
           <template v-slot:prepend>
             <q-icon name="search" />
           </template>
@@ -36,11 +36,11 @@
           unelevated 
         >
           <q-tooltip v-if="datasetStatus === 'completed'">
-            Re-process the knowledge graph
+            {{ t('knowledge.reprocessGraph') }}
           </q-tooltip>
         </q-btn>
-        <q-btn color="warning" icon="share" label="Share" @click="$emit('share')" unelevated text-color="dark" />
-        <q-btn color="primary" icon="add" label="Add Content" @click="$emit('add')" unelevated />
+        <q-btn color="warning" icon="share" :label="t('common.share')" @click="$emit('share')" unelevated text-color="dark" />
+        <q-btn color="primary" icon="add" :label="t('common.addContent')" @click="$emit('add')" unelevated />
       </div>
     </q-toolbar>
 
@@ -56,7 +56,7 @@
       </template>
       {{ statusBannerMessage }}
       <template v-slot:action v-if="datasetStatus === 'error'">
-        <q-btn flat label="Retry" color="red" @click="$emit('cognify')" />
+        <q-btn flat :label="t('common.retry')" color="red" @click="$emit('cognify')" />
       </template>
     </q-banner>
 
@@ -117,16 +117,16 @@
                 <q-list style="min-width: 150px">
                   <q-item clickable v-close-popup @click="$emit('preview', props.row)">
                     <q-item-section avatar><q-icon name="visibility" /></q-item-section>
-                    <q-item-section>Preview</q-item-section>
+                    <q-item-section>{{ t('common.preview') }}</q-item-section>
                   </q-item>
                   <q-item clickable v-close-popup @click="$emit('download', props.row)">
                     <q-item-section avatar><q-icon name="download" /></q-item-section>
-                    <q-item-section>Download</q-item-section>
+                    <q-item-section>{{ t('common.download') }}</q-item-section>
                   </q-item>
                   <q-separator />
                   <q-item clickable v-close-popup @click="$emit('delete', props.row.id)" class="text-negative">
                     <q-item-section avatar><q-icon name="delete" /></q-item-section>
-                    <q-item-section>Delete</q-item-section>
+                    <q-item-section>{{ t('common.delete') }}</q-item-section>
                   </q-item>
                 </q-list>
               </q-menu>
@@ -138,9 +138,9 @@
         <template v-slot:no-data>
           <div v-if="!loading" class="full-width row flex-center q-pa-xl text-grey-6 column">
             <q-icon name="folder_open" size="64px" class="q-mb-md" />
-            <div class="text-h6">No files in this dataset</div>
-            <div>Upload a file or add text to get started.</div>
-            <q-btn flat color="primary" label="Add Content" class="q-mt-sm" @click="$emit('add')" />
+            <div class="text-h6">{{ t('knowledge.noFiles') }}</div>
+            <div>{{ t('knowledge.uploadToStart') }}</div>
+            <q-btn flat color="primary" :label="t('common.addContent')" class="q-mt-sm" @click="$emit('add')" />
           </div>
         </template>
         </q-table>
@@ -153,6 +153,7 @@
 import { ref, computed } from 'vue';
 import { DatasetStatus, DataItemStatus, getDataItemStatus, type DataItem } from 'src/services/knowledge';
 import type { QTableColumn } from 'quasar';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
   datasetName: string;
@@ -174,11 +175,12 @@ defineEmits<{
 }>();
 
 const filter = ref('');
+const { t } = useI18n();
 
 // Computed properties for status display
 const cognifyButtonLabel = computed(() => {
   if (props.datasetStatus === DatasetStatus.PROCESSING) {
-    return 'Building...';
+    return t('knowledge.building');
   }
   return 'Cognify';
 });
@@ -227,9 +229,9 @@ const statusBannerIconColor = computed(() => {
 const statusBannerMessage = computed(() => {
   switch (props.datasetStatus) {
     case DatasetStatus.PROCESSING:
-      return 'Building knowledge graph... This may take a few minutes.';
+      return t('knowledge.buildGraphProcessing');
     case DatasetStatus.ERROR:
-      return 'An error occurred while processing. Please try again.';
+      return t('knowledge.processingError');
     default:
       return '';
   }
@@ -256,13 +258,13 @@ function getStatusColor(status: DatasetStatus): string {
 function getStatusLabel(status: DatasetStatus): string {
   switch (status) {
     case DatasetStatus.COMPLETED:
-      return 'Ready';
+      return t('knowledge.ready');
     case DatasetStatus.PROCESSING:
-      return 'Building...';
+      return t('knowledge.building');
     case DatasetStatus.PENDING:
-      return 'Pending';
+      return t('knowledge.pending');
     case DatasetStatus.ERROR:
-      return 'Error';
+      return t('knowledge.error');
     case DatasetStatus.EMPTY:
       return '';
     default:
@@ -283,10 +285,10 @@ function getCreatedAt(row: DataItem): string {
 }
 
 const columns: QTableColumn[] = [
-  { name: 'name', required: true, label: 'Name', align: 'left', field: 'name', sortable: true },
-  { name: 'type', align: 'left', label: 'Type', field: (row: DataItem) => getMimeType(row), sortable: true },
-  { name: 'status', align: 'left', label: 'Status', field: 'status', sortable: true },
-  { name: 'created_at', align: 'left', label: 'Added At', field: (row: DataItem) => getCreatedAt(row), sortable: true },
+  { name: 'name', required: true, label: t('knowledge.name'), align: 'left', field: 'name', sortable: true },
+  { name: 'type', align: 'left', label: t('knowledge.type'), field: (row: DataItem) => getMimeType(row), sortable: true },
+  { name: 'status', align: 'left', label: t('knowledge.status'), field: 'status', sortable: true },
+  { name: 'created_at', align: 'left', label: t('knowledge.addedAt'), field: (row: DataItem) => getCreatedAt(row), sortable: true },
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ];
 
@@ -300,7 +302,7 @@ function getItemStatusColor(status: DataItemStatus): string {
 }
 
 function getItemStatusLabel(status: DataItemStatus): string {
-  return status === DataItemStatus.COMPLETED ? 'Ready' : 'Pending';
+  return status === DataItemStatus.COMPLETED ? t('knowledge.ready') : t('knowledge.pending');
 }
 
 function getItemStatusIcon(status: DataItemStatus): string {
@@ -324,8 +326,8 @@ function getIconColor(mime?: string) {
 }
 
 function formatMime(mime?: string) {
-  if (!mime) return 'Unknown';
-  if (mime === 'application/octet-stream') return 'File';
+  if (!mime) return t('knowledge.unknown');
+  if (mime === 'application/octet-stream') return t('knowledge.file');
   return mime.split('/').pop()?.toUpperCase() || mime;
 }
 </script>

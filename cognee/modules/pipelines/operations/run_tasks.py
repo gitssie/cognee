@@ -1,6 +1,7 @@
 import os
 
 import asyncio
+import contextvars
 from functools import wraps
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -14,6 +15,7 @@ from cognee.modules.users.methods import get_default_user
 from cognee.modules.pipelines.utils import generate_pipeline_id
 from cognee.modules.pipelines.exceptions import PipelineRunFailedError
 from cognee.tasks.ingestion import resolve_data_directories
+from cognee.context_global_variables import set_database_global_context_variables
 from cognee.modules.pipelines.models.PipelineRunInfo import (
     PipelineRunCompleted,
     PipelineRunErrored,
@@ -81,6 +83,11 @@ async def run_tasks(
     )
 
     try:
+        # Background execution resumes this async generator in a different task after the
+        # initial started event is yielded. Re-apply the dataset-scoped DB context here so
+        # downstream vector/graph operations keep using the correct per-dataset config.
+        await set_database_global_context_variables(dataset.id, dataset.owner_id)
+
         if not isinstance(data, list):
             data = [data]
 
@@ -109,7 +116,8 @@ async def run_tasks(
                         },
                         user,  # Used by pipeline framework for telemetry
                         incremental_loading,
-                    )
+                    ),
+                    context=contextvars.copy_context(),
                 )
                 for data_item in data_batch
             ]

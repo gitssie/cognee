@@ -2,9 +2,9 @@
   <div class="column no-wrap full-height">
     <!-- Sidebar Header -->
     <q-toolbar class="bg-grey-1">
-      <q-toolbar-title class="text-subtitle2 text-weight-bold">Projects</q-toolbar-title>
+      <q-toolbar-title class="text-subtitle2 text-weight-bold">{{ t('projects.projects') }}</q-toolbar-title>
       <q-btn flat round dense icon="add" size="sm" @click="showDialog = true">
-        <q-tooltip>New project</q-tooltip>
+        <q-tooltip>{{ t('projects.newProjectTooltip') }}</q-tooltip>
       </q-btn>
     </q-toolbar>
     <q-separator />
@@ -14,7 +14,7 @@
       <q-input
         v-model="search"
         dense outlined
-        placeholder="Search projects..."
+        :placeholder="t('projects.searchProjects')"
         bg-color="white"
         clearable
       >
@@ -40,19 +40,19 @@
             <q-icon name="public" size="20px" />
           </q-item-section>
           <q-item-section>
-            <q-item-label class="text-weight-medium">Global Rules</q-item-label>
+              <q-item-label class="text-weight-medium">{{ t('projects.globalRules') }}</q-item-label>
             <q-item-label
               caption
               :class="modelValue === null ? 'text-white opacity-70' : 'text-grey-6'"
             >
-              No project context
+              {{ t('projects.noProjectContext') }}
             </q-item-label>
           </q-item-section>
         </q-item>
 
         <q-separator class="q-my-sm q-mx-md" />
         <q-item-label header class="text-caption text-grey-5 text-uppercase q-py-xs">
-          My Projects
+          {{ t('projects.myProjects') }}
         </q-item-label>
 
         <!-- Loading skeleton -->
@@ -104,14 +104,14 @@
                       <q-item-section avatar>
                         <q-icon name="edit" size="18px" />
                       </q-item-section>
-                      <q-item-section>Rename</q-item-section>
+                      <q-item-section>{{ t('projects.rename') }}</q-item-section>
                     </q-item>
                     <q-separator />
                     <q-item clickable v-close-popup @click="$emit('delete', project)" class="text-negative">
                       <q-item-section avatar>
                         <q-icon name="delete" color="negative" size="18px" />
                       </q-item-section>
-                      <q-item-section>Delete</q-item-section>
+                      <q-item-section>{{ t('common.delete') }}</q-item-section>
                     </q-item>
                   </q-list>
                 </q-menu>
@@ -124,8 +124,8 @@
             v-if="filteredProjects.length === 0 && !loading"
             class="q-pa-md text-center text-grey-5 text-caption"
           >
-            <template v-if="search">No projects match "{{ search }}"</template>
-            <template v-else>No projects yet.<br />Click + to create one.</template>
+            <template v-if="search">{{ t('projects.noProjectsMatch', { term: search }) }}</template>
+            <template v-else>{{ t('projects.noProjectsYet') }}</template>
           </div>
         </template>
 
@@ -136,7 +136,7 @@
     <q-dialog v-model="showDialog" @hide="resetForm">
       <q-card style="min-width: 460px;">
         <q-toolbar>
-          <q-toolbar-title>New Project</q-toolbar-title>
+          <q-toolbar-title>{{ t('projects.newProject') }}</q-toolbar-title>
           <q-btn flat round dense icon="close" @click="showDialog = false" />
         </q-toolbar>
         <q-separator />
@@ -146,8 +146,8 @@
           <q-input
             v-model="form.name"
             outlined dense
-            label="Project Name *"
-            placeholder="e.g. Backend API"
+            :label="t('projects.projectName')"
+            :placeholder="t('projects.projectNamePlaceholder')"
             :error="!!formErrors.name"
             :error-message="formErrors.name"
             @keyup.enter="handleCreate"
@@ -157,7 +157,7 @@
           <q-select
             v-model="form.type"
             outlined dense
-            label="Type"
+            :label="t('projects.type')"
             :options="typeOptions"
             emit-value map-options
           />
@@ -167,8 +167,8 @@
             v-if="form.type === 'git'"
             v-model="form.remote_url"
             outlined dense
-            label="Git Remote URL"
-            placeholder="https://github.com/org/repo"
+            :label="t('projects.gitRemoteUrl')"
+            :placeholder="t('projects.gitRemotePlaceholder')"
             :error="!!formErrors.remote_url"
             :error-message="formErrors.remote_url"
           />
@@ -178,27 +178,40 @@
             v-if="form.type === 'file'"
             v-model="form.local_path"
             outlined dense
-            label="Local Path"
-            placeholder="/home/user/project"
+            :label="t('projects.localPath')"
+            :placeholder="t('projects.localPathPlaceholder')"
           />
 
           <!-- OpenCode Project ID (optional) -->
           <q-input
             v-model="form.opencode_project_id"
             outlined dense
-            label="OpenCode Project ID (optional)"
-            placeholder="Git root commit hash from OpenCode"
+            :label="t('projects.openCodeProjectId')"
+            :placeholder="t('projects.openCodeProjectIdPlaceholder')"
           >
             <template #hint>
-              Paste the project ID shown in OpenCode to auto-link rules to this project.
+              {{ t('projects.openCodeProjectIdHint') }}
+            </template>
+          </q-input>
+
+          <!-- Muninn Vault API Key (optional, Muninn vector backend only) -->
+          <q-input
+            v-model="form.vault_api_key"
+            outlined dense
+            :label="t('projects.muninnVaultApiKey')"
+            placeholder="mk_..."
+            type="password"
+          >
+            <template #hint>
+              {{ t('projects.muninnVaultHint') }}
             </template>
           </q-input>
 
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn flat label="Cancel" @click="showDialog = false" />
+          <q-btn flat :label="t('common.cancel')" @click="showDialog = false" />
           <q-btn
-            unelevated color="primary" label="Create"
+            unelevated color="primary" :label="t('common.create')"
             :loading="creating"
             :disable="!form.name.trim()"
             @click="handleCreate"
@@ -213,6 +226,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useQuasar } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { ProjectsService, type Project, type CreateProjectInput, type ProjectType } from 'src/services/projects';
 
 const props = defineProps<{
@@ -229,6 +243,7 @@ const emit = defineEmits<{
 }>();
 
 const $q = useQuasar();
+const { t } = useI18n();
 
 const search = ref('');
 const showDialog = ref(false);
@@ -240,15 +255,16 @@ const form = ref<CreateProjectInput>({
   opencode_project_id: null,
   remote_url: null,
   local_path: null,
+  vault_api_key: null,
 });
 
 const formErrors = ref<{ name?: string; remote_url?: string }>({});
 
-const typeOptions = [
-  { label: 'General', value: 'general' },
+const typeOptions = computed(() => [
+  { label: t('projects.general'), value: 'general' },
   { label: 'Git Repository', value: 'git' },
-  { label: 'Local Files', value: 'file' },
-];
+  { label: t('projects.localFiles'), value: 'file' },
+]);
 
 const filteredProjects = computed(() => {
   const q = search.value.toLowerCase().trim();
@@ -266,21 +282,21 @@ function typeIcon(type: ProjectType): string {
 
 function typeLabel(project: Project): string {
   switch (project.type) {
-    case 'git': return project.remote_url ?? 'git';
-    case 'file': return project.local_path ?? 'local';
-    default: return 'general';
+    case 'git': return project.remote_url ?? t('projects.git');
+    case 'file': return project.local_path ?? t('projects.localFiles');
+    default: return t('projects.general');
   }
 }
 
 function resetForm() {
-  form.value = { name: '', type: 'general', opencode_project_id: null, remote_url: null, local_path: null };
+  form.value = { name: '', type: 'general', opencode_project_id: null, remote_url: null, local_path: null, vault_api_key: null };
   formErrors.value = {};
 }
 
 async function handleCreate() {
   formErrors.value = {};
   if (!form.value.name.trim()) {
-    formErrors.value.name = 'Name is required';
+    formErrors.value.name = t('projects.projectNameRequired');
     return;
   }
   if (form.value.type === 'git' && form.value.remote_url) {
@@ -296,9 +312,9 @@ async function handleCreate() {
     const project = await ProjectsService.createProject(form.value);
     showDialog.value = false;
     emit('projectCreated', project);
-    $q.notify({ color: 'positive', message: `Project "${project.name}" created` });
+    $q.notify({ color: 'positive', message: t('projects.projectCreated', { name: project.name }) });
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to create project' });
+    $q.notify({ color: 'negative', message: t('projects.failedCreateProject') });
   } finally {
     creating.value = false;
   }

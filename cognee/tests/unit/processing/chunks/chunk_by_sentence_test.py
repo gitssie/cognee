@@ -1,4 +1,5 @@
 from itertools import product
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from cognee.tasks.chunks import chunk_by_sentence
 from cognee.tests.unit.processing.chunks.test_input import INPUT_TEXTS_LONGWORDS, INPUT_TEXTS
 from cognee.infrastructure.databases.vector.embeddings import get_embedding_engine
+from cognee.tasks.chunks.chunk_by_sentence import get_word_size
 
 maximum_length_vals = [None, 16, 64]
 
@@ -57,3 +59,15 @@ def test_paragraph_chunk_length(input_text, maximum_length):
 def test_paragraph_chunk_long_input(input_text, maximum_length):
     with pytest.raises(ValueError):
         list(chunk_by_sentence(input_text, maximum_length))
+
+
+def test_get_word_size_fallback_counts_cjk_characters_and_ascii_runs():
+    class MockEngine:
+        tokenizer = None
+
+    with patch(
+        "cognee.tasks.chunks.chunk_by_sentence.get_embedding_engine",
+        return_value=MockEngine(),
+    ):
+        assert get_word_size("中文English123") == 3
+        assert get_word_size("纯中文测试") == 5

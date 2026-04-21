@@ -5,6 +5,7 @@ from pydantic import Field
 from fastapi import Depends, APIRouter
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import HTTPException
 
 from cognee.modules.search.types import SearchType, SearchResult
 from cognee.api.DTO import InDTO, OutDTO
@@ -16,13 +17,24 @@ from cognee.shared.utils import send_telemetry
 from cognee.shared.usage_logger import log_usage
 from cognee import __version__ as cognee_version
 from cognee.infrastructure.databases.exceptions import DatabaseNotCreatedError
+from cognee.infrastructure.databases.vector import get_vectordb_config
 from cognee.exceptions import CogneeValidationError
+
+
+def _get_default_search_type() -> SearchType:
+    vector_db_provider = get_vectordb_config().vector_db_provider.lower()
+    if vector_db_provider == "muninn":
+        return SearchType.MUNINN_RECALL
+
+    return SearchType.GRAPH_COMPLETION
 
 
 # Note: Datasets sent by name will only map to datasets owned by the request sender
 #       To search for datasets not owned by the request sender dataset UUID is needed
 class SearchPayloadDTO(InDTO):
-    search_type: SearchType = Field(default=SearchType.GRAPH_COMPLETION)
+    search_type: Optional[SearchType] = Field(default=None)
+    recall_mode: Optional[str] = Field(default="balanced")
+    threshold: Optional[float] = Field(default=None)
     datasets: Optional[list[str]] = Field(default=None)
     dataset_ids: Optional[list[UUID]] = Field(default=None, examples=[[]])
     query: str = Field(default="What is in the document?")
@@ -107,15 +119,28 @@ def get_search_router() -> APIRouter:
         - To search datasets not owned by the request sender, dataset UUID is needed
         - If permission is denied, returns empty list instead of error
         """
+        resolved_search_type = payload.search_type or _get_default_search_type()
+        vector_db_provider = get_vectordb_config().vector_db_provider.lower()
+
+        if vector_db_provider == "muninn":
+            dataset_count = len(payload.dataset_ids or [])
+            if dataset_count != 1:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Muninn search requires exactly one dataset_id.",
+                )
+
         send_telemetry(
             "Search API Endpoint Invoked",
             user.id,
             additional_properties={
                 "endpoint": "POST /v1/search",
-                "search_type": str(payload.search_type),
+                "search_type": str(resolved_search_type),
                 "datasets": payload.datasets,
                 "dataset_ids": [str(dataset_id) for dataset_id in payload.dataset_ids or []],
                 "query": payload.query,
+                "recall_mode": payload.recall_mode,
+                "threshold": payload.threshold,
                 "system_prompt": payload.system_prompt,
                 "node_name": payload.node_name,
                 "top_k": payload.top_k,
@@ -130,10 +155,12 @@ def get_search_router() -> APIRouter:
         try:
             results = await cognee_search(
                 query_text=payload.query,
-                query_type=payload.search_type,
+                query_type=resolved_search_type,
                 user=user,
                 datasets=payload.datasets,
                 dataset_ids=payload.dataset_ids,
+                recall_mode=payload.recall_mode,
+                threshold=payload.threshold,
                 system_prompt=payload.system_prompt,
                 node_name=payload.node_name,
                 top_k=payload.top_k,

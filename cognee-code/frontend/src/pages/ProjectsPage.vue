@@ -29,7 +29,7 @@
     <q-dialog v-model="showRenameDialog">
       <q-card style="min-width: 380px;">
         <q-toolbar>
-          <q-toolbar-title>Rename Project</q-toolbar-title>
+          <q-toolbar-title>{{ t('projects.renameProject') }}</q-toolbar-title>
           <q-btn flat round dense icon="close" @click="showRenameDialog = false" />
         </q-toolbar>
         <q-separator />
@@ -37,16 +37,16 @@
           <q-input
             v-model="renameValue"
             outlined dense
-            label="New Name"
+            :label="t('projects.newName')"
             :error="!!renameError"
             :error-message="renameError"
             @keyup.enter="confirmRename"
           />
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn flat label="Cancel" @click="showRenameDialog = false" />
+          <q-btn flat :label="t('common.cancel')" @click="showRenameDialog = false" />
           <q-btn
-            unelevated color="primary" label="Rename"
+            unelevated color="primary" :label="t('projects.rename')"
             :loading="renaming"
             :disable="!renameValue.trim()"
             @click="confirmRename"
@@ -61,6 +61,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { ProjectsService, type Project } from 'src/services/projects';
 import ProjectSidebar from 'components/projects/ProjectSidebar.vue';
 import ProjectDetail from 'components/projects/ProjectDetail.vue';
@@ -68,6 +69,7 @@ import ProjectDetail from 'components/projects/ProjectDetail.vue';
 defineOptions({ name: 'ProjectsPage' });
 
 const $q = useQuasar();
+const { t } = useI18n();
 
 const projects = ref<Project[]>([]);
 const loadingProjects = ref(false);
@@ -103,9 +105,9 @@ async function confirmRename() {
     if (idx !== -1) projects.value[idx] = updated;
     if (selectedProject.value?.id === updated.id) selectedProject.value = updated;
     showRenameDialog.value = false;
-    $q.notify({ color: 'positive', message: `Renamed to "${updated.name}"` });
+    $q.notify({ color: 'positive', message: t('projects.renamedTo', { name: updated.name }) });
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to rename project' });
+    $q.notify({ color: 'negative', message: t('projects.renameFailed') });
   } finally {
     renaming.value = false;
   }
@@ -115,19 +117,19 @@ async function confirmRename() {
 
 function handleDeleteRequest(project: Project) {
   $q.dialog({
-    title: 'Delete Project',
-    message: `Delete "${project.name}"? This will permanently remove all associated rules and data.`,
+    title: t('projects.deleteProject'),
+    message: t('projects.deleteProjectConfirm', { name: project.name }),
     cancel: true,
     persistent: true,
-    ok: { label: 'Delete', color: 'negative', unelevated: true },
+    ok: { label: t('common.delete'), color: 'negative', unelevated: true },
   }).onOk(() => void (async () => {
     try {
       await ProjectsService.deleteProject(project.id);
       projects.value = projects.value.filter((p) => p.id !== project.id);
       if (selectedProject.value?.id === project.id) selectedProject.value = null;
-      $q.notify({ color: 'positive', message: `Project "${project.name}" deleted` });
+      $q.notify({ color: 'positive', message: t('projects.projectDeleted', { name: project.name }) });
     } catch {
-      $q.notify({ color: 'negative', message: 'Failed to delete project' });
+      $q.notify({ color: 'negative', message: t('projects.deleteProjectFailed') });
     }
   })());
 }
@@ -146,7 +148,7 @@ onMounted(async () => {
   try {
     projects.value = await ProjectsService.getProjects();
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to load projects' });
+    $q.notify({ color: 'negative', message: t('projects.failedLoadProjects') });
   } finally {
     loadingProjects.value = false;
   }

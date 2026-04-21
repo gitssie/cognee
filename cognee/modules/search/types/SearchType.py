@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class SearchType(str, Enum):
+    MUNINN_RECALL = "MUNINN_RECALL"
     SUMMARIES = "SUMMARIES"
     CHUNKS = "CHUNKS"
     RAG_COMPLETION = "RAG_COMPLETION"

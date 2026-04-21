@@ -13,13 +13,32 @@ export interface PipelineRunInfo {
   [key: string]: unknown;
 }
 
+export interface CognifyOptions {
+  chunkSize?: number;
+  chunkOverlapRatio?: number;
+  maxTextLength?: number;
+}
+
+type CognifyResponse = PipelineRunInfo[] | Record<string, PipelineRunInfo>;
+
+function normalizeCognifyResponse(data: CognifyResponse): PipelineRunInfo[] {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  return Object.values(data ?? {});
+}
+
 export const CognifyService = {
-  async cognify(datasetId: string): Promise<PipelineRunInfo[]> {
-    const response = await api.post<PipelineRunInfo[]>('/cognify', {
+  async cognify(datasetId: string, options?: CognifyOptions): Promise<PipelineRunInfo[]> {
+    const response = await api.post<CognifyResponse>('/cognify', {
       dataset_ids: [datasetId],
-      run_in_background: true
+      run_in_background: true,
+      chunk_size: options?.chunkSize,
+      chunk_overlap_ratio: options?.chunkOverlapRatio,
+      max_text_length: options?.maxTextLength,
     });
-    return response.data;
+    return normalizeCognifyResponse(response.data);
   },
 
   getSseUrl(pipelineRunId: string): string {

@@ -11,7 +11,12 @@ class CsvDocument(Document):
     type: str = "csv"
     mime_type: str = "text/csv"
 
-    async def read(self, chunker_cls: Type[Chunker], max_chunk_size: int):
+    async def read(
+        self,
+        chunker_cls: Type[Chunker],
+        max_chunk_size: int,
+        max_text_length: int | None = None,
+    ):
         async def get_text():
             async with open_data_file(
                 self.raw_data_location, mode="r", encoding="utf-8", newline=""
@@ -28,6 +33,7 @@ class CsvDocument(Document):
                     yield row_text
 
         chunker = chunker_cls(self, max_chunk_size=max_chunk_size, get_text=get_text)
+        chunker.max_text_length = max_text_length
 
         async for chunk in chunker.read():
             yield chunk

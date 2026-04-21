@@ -246,3 +246,25 @@ async def test_chunk_indices_and_ids_are_deterministic(chunker_class, make_text_
     assert chunks1[0].id == chunks2[0].id, "First chunk ID should be deterministic"
     assert chunks1[1].id == chunks2[1].id, "Second chunk ID should be deterministic"
     assert chunks1[0].id != chunks1[1].id, "Chunk IDs should be unique within a run"
+
+
+@pytest.mark.asyncio
+async def test_long_single_line_text_is_split_by_text_length(chunker_class, make_text_generator):
+    text = "甲" * 20000
+    document = Document(
+        id=uuid4(),
+        name="test_document",
+        raw_data_location="/test/path",
+        external_metadata=None,
+        mime_type="text/plain",
+    )
+    get_text = make_text_generator(text)
+    chunker = chunker_class(document, get_text, max_chunk_size=16384)
+    chunker.max_text_length = 16384
+    chunks = await collect_chunks(chunker)
+
+    assert len(chunks) == 2, "Long single-line text should be split into multiple chunks"
+    assert all(len(chunk.text) <= 16384 for chunk in chunks), (
+        "Each chunk text must stay within the text length cap"
+    )
+    assert "".join(chunk.text for chunk in chunks) == text, "Chunking should preserve all text"

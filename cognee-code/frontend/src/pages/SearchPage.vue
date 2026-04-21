@@ -1,6 +1,6 @@
 <template>
   <div class="q-pa-md">
-    <div class="text-h4 q-mb-md">Search Knowledge</div>
+    <div class="text-h4 q-mb-md">{{ t('searchPage.title') }}</div>
     
     <!-- Search Input Section -->
     <q-card class="q-mb-md">
@@ -10,7 +10,7 @@
           <div class="col-12">
             <q-input
               v-model="searchPayload.query"
-              label="Search query"
+              :label="t('searchPage.query')"
               outlined
               autofocus
               @keyup.enter="performSearch"
@@ -21,7 +21,7 @@
               <template v-slot:append>
                 <q-btn 
                   color="primary" 
-                  label="Search" 
+                  :label="t('common.search')" 
                   unelevated
                   :loading="loading"
                   @click="performSearch"
@@ -32,56 +32,44 @@
         </div>
       </q-card-section>
 
-      <!-- Search Options -->
       <q-separator />
       <q-card-section>
         <div class="row q-col-gutter-md">
-          <!-- Search Type -->
-          <div class="col-12 col-md-4">
+          <!-- Dataset Filter -->
+          <div class="col-12 col-md-8">
             <q-select
-              v-model="searchPayload.search_type"
-              :options="searchTypeOptions"
-              label="Search Type"
+              v-model="selectedDatasetId"
+              :options="datasetOptions"
+               :label="t('searchPage.requiredDataset')"
               outlined
               dense
               emit-value
               map-options
+              :clearable="false"
+              :rules="[datasetRequiredRule]"
             >
-              <template v-slot:option="scope">
-                <q-item v-bind="scope.itemProps">
-                  <q-item-section>
-                    <q-item-label>{{ scope.opt.label }}</q-item-label>
-                    <q-item-label caption class="text-grey-6">{{ scope.opt.description }}</q-item-label>
-                  </q-item-section>
-                  <q-item-section side>
-                    <q-badge :label="scope.opt.category" color="grey-4" text-color="grey-8" />
-                  </q-item-section>
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">{{ t('searchPage.noDatasetsAvailable') }}</q-item-section>
                 </q-item>
               </template>
             </q-select>
           </div>
 
-          <!-- Dataset Filter -->
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-2">
             <q-select
-              v-model="selectedDatasets"
-              :options="datasetOptions"
-              label="Filter by Datasets"
+              v-model="searchPayload.recall_mode"
+              :options="recallModeOptions"
+              :label="t('searchPage.recallMode')"
               outlined
               dense
-              multiple
               emit-value
               map-options
-              use-chips
-              clearable
-              class="dataset-select"
-            >
-              <template v-slot:no-option>
-                <q-item>
-                  <q-item-section class="text-grey">No datasets available</q-item-section>
-                </q-item>
-              </template>
-            </q-select>
+              :clearable="false"
+            />
+            <div class="text-caption text-grey-6 q-mt-xs">
+              {{ t('searchPage.modeDefaultThreshold', { threshold: selectedModeDefaultThresholdLabel }) }}
+            </div>
           </div>
 
           <!-- Top K -->
@@ -89,11 +77,25 @@
             <q-input
               v-model.number="searchPayload.top_k"
               type="number"
-              label="Max Results"
+              :label="t('searchPage.maxResults')"
               outlined
               dense
               :min="1"
               :max="100"
+            />
+          </div>
+
+          <div class="col-12 col-md-2">
+            <q-input
+              v-model.number="searchPayload.threshold"
+              type="number"
+              :label="t('searchPage.threshold')"
+              outlined
+              dense
+              :min="0"
+              :max="1"
+              :step="0.05"
+              clearable
             />
           </div>
 
@@ -103,7 +105,7 @@
               flat 
               dense 
               :icon="showAdvanced ? 'expand_less' : 'expand_more'"
-              :label="showAdvanced ? 'Less' : 'More'"
+               :label="showAdvanced ? t('searchPage.less') : t('searchPage.more')"
               @click="showAdvanced = !showAdvanced"
             />
           </div>
@@ -113,30 +115,12 @@
         <q-slide-transition>
           <div v-show="showAdvanced" class="q-mt-md">
             <div class="row q-col-gutter-md">
-              <!-- System Prompt -->
-              <div class="col-12">
-                <q-input
-                  v-model="searchPayload.system_prompt"
-                  label="System Prompt (for AI completion types)"
-                  outlined
-                  dense
-                  type="textarea"
-                  rows="2"
-                  :disable="!isCompletionType"
-                />
-              </div>
-
               <!-- Options Row -->
               <div class="col-12">
                 <div class="row q-gutter-md">
                   <q-checkbox
-                    v-model="searchPayload.only_context"
-                    label="Only Context (skip LLM)"
-                    :disable="!isCompletionType"
-                  />
-                  <q-checkbox
                     v-model="searchPayload.verbose"
-                    label="Verbose Results"
+                      :label="t('searchPage.verboseResults')"
                   />
                 </div>
               </div>
@@ -146,22 +130,14 @@
       </q-card-section>
     </q-card>
 
-    <!-- Search Type Description -->
-    <q-banner v-if="currentTypeInfo" class="bg-blue-1 q-mb-md" rounded>
-      <template v-slot:avatar>
-        <q-icon name="info" color="primary" />
-      </template>
-      <strong>{{ currentTypeInfo.label }}:</strong> {{ currentTypeInfo.description }}
-    </q-banner>
-
     <!-- Results Section -->
     <q-card class="results-section">
       <q-card-section>
         <!-- Loading State -->
         <div v-if="loading" class="column items-center q-pa-lg">
           <q-spinner-orbit size="60px" color="primary" />
-          <div class="text-h6 text-grey-8 q-mt-lg">Searching knowledge base...</div>
-          <div class="text-caption text-grey-5 q-mt-sm">This may take a moment</div>
+          <div class="text-h6 text-grey-8 q-mt-lg">{{ t('searchPage.searching') }}</div>
+          <div class="text-caption text-grey-5 q-mt-sm">{{ t('searchPage.searchingHint') }}</div>
         </div>
 
         <!-- Results List -->
@@ -169,9 +145,9 @@
           <div class="flex items-center justify-between q-mb-md">
             <div class="text-h6">
               <q-icon name="check_circle" color="positive" class="q-mr-sm" />
-              {{ results.length }} result{{ results.length > 1 ? 's' : '' }} found
+              {{ t('searchPage.resultsFound', { count: results.length }) }}
             </div>
-            <q-btn flat dense icon="content_copy" label="Copy All" @click="copyAllResults" />
+            <q-btn flat dense icon="content_copy" :label="t('searchPage.copyAll')" @click="copyAllResults" />
           </div>
 
           <q-list bordered separator class="rounded-borders">
@@ -179,7 +155,7 @@
               v-for="(result, index) in results"
               :key="index"
               :label="getResultTitle(result, index)"
-              :caption="result.dataset_name ? `Dataset: ${result.dataset_name}` : undefined"
+               :caption="result.dataset_name ? t('searchPage.datasetCaption', { name: result.dataset_name }) : undefined"
               expand-separator
               default-opened
             >
@@ -188,32 +164,32 @@
                   <div class="result-content">
                     <!-- Main Result -->
                     <div v-if="result.search_result" class="q-mb-md">
-                      <div class="text-weight-medium text-grey-7 q-mb-xs">Result:</div>
+                      <div class="text-weight-medium text-grey-7 q-mb-xs">{{ t('searchPage.result') }}:</div>
                       <div class="result-text" v-html="formatResult(result.search_result)"></div>
                     </div>
 
                     <!-- Verbose: Text Result (LLM completion) -->
                     <div v-if="result.text_result" class="q-mb-md">
-                      <div class="text-weight-medium text-grey-7 q-mb-xs">Completion:</div>
+                      <div class="text-weight-medium text-grey-7 q-mb-xs">{{ t('searchPage.completion') }}:</div>
                       <div class="result-text" v-html="formatResult(result.text_result)"></div>
                     </div>
 
                     <!-- Verbose: Context Result -->
                     <div v-if="result.context_result" class="q-mb-md">
-                      <div class="text-weight-medium text-grey-7 q-mb-xs">Context:</div>
+                      <div class="text-weight-medium text-grey-7 q-mb-xs">{{ t('searchPage.context') }}:</div>
                       <div class="result-text text-grey-8">{{ formatContext(result.context_result) }}</div>
                     </div>
 
                     <!-- Verbose: Objects Result -->
                     <div v-if="result.objects_result && searchPayload.verbose">
-                      <div class="text-weight-medium text-grey-7 q-mb-xs">Raw Objects:</div>
+                      <div class="text-weight-medium text-grey-7 q-mb-xs">{{ t('searchPage.rawObjects') }}:</div>
                       <pre class="result-raw">{{ JSON.stringify(result.objects_result, null, 2) }}</pre>
                     </div>
                   </div>
                 </q-card-section>
                 <q-separator />
                 <q-card-actions align="right">
-                  <q-btn flat dense icon="content_copy" label="Copy" @click="copyResult(result)" />
+                  <q-btn flat dense icon="content_copy" :label="t('searchPage.copy')" @click="copyResult(result)" />
                 </q-card-actions>
               </q-card>
             </q-expansion-item>
@@ -223,22 +199,22 @@
         <!-- Empty State (after search) -->
         <div v-else-if="searched" class="column items-center q-pa-lg text-grey">
           <q-icon name="search_off" size="64px" color="grey-4" />
-          <div class="text-h6 q-mt-md">No results found</div>
-          <div class="text-caption">Try a different query or search type</div>
+          <div class="text-h6 q-mt-md">{{ t('searchPage.noResults') }}</div>
+          <div class="text-caption">{{ t('searchPage.differentQuery') }}</div>
         </div>
 
         <!-- Initial State (before search) -->
         <div v-else class="column items-center q-pa-lg text-grey-5">
           <q-icon name="manage_search" size="64px" color="grey-3" />
-          <div class="text-subtitle1 q-mt-md">Enter a query and press Search</div>
-          <div class="text-caption">Results will appear here</div>
+          <div class="text-subtitle1 q-mt-md">{{ t('searchPage.enterQuery') }}</div>
+          <div class="text-caption">{{ t('searchPage.resultsAppear') }}</div>
         </div>
       </q-card-section>
     </q-card>
 
     <!-- Search History -->
     <div v-if="!searched && history.length > 0" class="q-mt-lg">
-      <div class="text-h6 q-mb-sm">Recent Searches</div>
+        <div class="text-h6 q-mb-sm">{{ t('searchPage.recentSearches') }}</div>
       <q-list bordered separator class="rounded-borders">
         <q-item 
           v-for="item in history" 
@@ -265,10 +241,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { useQuasar, copyToClipboard } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { 
   SearchService, 
-  SearchType, 
-  SearchTypeInfo,
   type SearchPayload, 
   type SearchResult,
   type SearchHistoryItem 
@@ -276,18 +251,17 @@ import {
 import { KnowledgeService, type Dataset } from 'src/services/knowledge';
 
 const $q = useQuasar();
+const { t } = useI18n();
 
 // State
 const searchPayload = ref<SearchPayload>({
   query: '',
-  search_type: SearchType.GRAPH_COMPLETION,
+  recall_mode: 'balanced',
   top_k: 10,
-  system_prompt: 'Answer the question using the provided context. Be as brief as possible.',
-  only_context: false,
   verbose: false,
 });
 
-const selectedDatasets = ref<string[]>([]);
+const selectedDatasetId = ref<string | null>(null);
 const results = ref<SearchResult[]>([]);
 const history = ref<SearchHistoryItem[]>([]);
 const datasets = ref<Dataset[]>([]);
@@ -296,15 +270,6 @@ const searched = ref(false);
 const showAdvanced = ref(false);
 
 // Computed
-const searchTypeOptions = computed(() => {
-  return Object.entries(SearchTypeInfo).map(([type, info]) => ({
-    value: type,
-    label: info.label,
-    description: info.description,
-    category: info.category,
-  }));
-});
-
 const datasetOptions = computed(() => {
   return datasets.value.map(ds => ({
     value: ds.id,
@@ -312,39 +277,39 @@ const datasetOptions = computed(() => {
   }));
 });
 
-const currentTypeInfo = computed(() => {
-  if (searchPayload.value.search_type) {
-    return SearchTypeInfo[searchPayload.value.search_type];
-  }
-  return null;
+const recallModeOptions = computed(() => [
+  { value: 'balanced', label: t('searchPage.recallModeBalanced') },
+  { value: 'semantic', label: t('searchPage.recallModeSemantic') },
+  { value: 'recent', label: t('searchPage.recallModeRecent') },
+  { value: 'deep', label: t('searchPage.recallModeDeep') },
+]);
+
+const recallModeDefaultThresholds: Record<string, number | null> = {
+  balanced: null,
+  semantic: 0.3,
+  recent: 0.2,
+  deep: 0.1,
+};
+
+const selectedModeDefaultThresholdLabel = computed(() => {
+  const mode = searchPayload.value.recall_mode ?? 'balanced';
+  const threshold = recallModeDefaultThresholds[mode];
+  return threshold === null ? t('searchPage.engineDefaultThreshold') : String(threshold);
 });
 
-const isCompletionType = computed(() => {
-  const completionTypes = [
-    SearchType.GRAPH_COMPLETION,
-    SearchType.RAG_COMPLETION,
-    SearchType.GRAPH_SUMMARY_COMPLETION,
-    SearchType.TRIPLET_COMPLETION,
-    SearchType.GRAPH_COMPLETION_COT,
-    SearchType.GRAPH_COMPLETION_CONTEXT_EXTENSION,
-    SearchType.FEELING_LUCKY,
-  ];
-  return searchPayload.value.search_type && completionTypes.includes(searchPayload.value.search_type);
-});
+const datasetRequiredRule = (value: string | null) => !!value || t('searchPage.datasetRequiredMessage');
 
-// Watch dataset selection
-watch(selectedDatasets, (newVal) => {
-  if (newVal && newVal.length > 0) {
-    searchPayload.value.dataset_ids = newVal;
-  } else {
-    searchPayload.value.dataset_ids = [];
-  }
+watch(selectedDatasetId, (newVal) => {
+  searchPayload.value.dataset_ids = newVal ? [newVal] : [];
 });
 
 // Methods
 async function loadDatasets() {
   try {
     datasets.value = await KnowledgeService.getDatasets();
+    if (!selectedDatasetId.value && datasets.value.length > 0) {
+      selectedDatasetId.value = datasets.value[0]?.id ?? null;
+    }
   } catch {
     // Silent fail - datasets are optional
   }
@@ -367,6 +332,15 @@ async function performSearch() {
     });
     return;
   }
+
+  if (!selectedDatasetId.value) {
+    $q.notify({
+      color: 'warning',
+      message: t('searchPage.datasetRequiredMessage'),
+      icon: 'warning',
+    });
+    return;
+  }
   
   loading.value = true;
   searched.value = true;
@@ -378,20 +352,17 @@ async function performSearch() {
       query: searchPayload.value.query,
     };
 
-    if (searchPayload.value.search_type && searchPayload.value.search_type !== SearchType.GRAPH_COMPLETION) {
-      payload.search_type = searchPayload.value.search_type;
-    }
     if (searchPayload.value.dataset_ids && searchPayload.value.dataset_ids.length > 0) {
       payload.dataset_ids = searchPayload.value.dataset_ids;
     }
     if (searchPayload.value.top_k && searchPayload.value.top_k !== 10) {
       payload.top_k = searchPayload.value.top_k;
     }
-    if (searchPayload.value.system_prompt && isCompletionType.value) {
-      payload.system_prompt = searchPayload.value.system_prompt;
+    if (searchPayload.value.recall_mode) {
+      payload.recall_mode = searchPayload.value.recall_mode;
     }
-    if (searchPayload.value.only_context) {
-      payload.only_context = true;
+    if (typeof searchPayload.value.threshold === 'number') {
+      payload.threshold = searchPayload.value.threshold;
     }
     if (searchPayload.value.verbose) {
       payload.verbose = true;

@@ -31,7 +31,7 @@ def get_add_router() -> APIRouter:
         datasetName: Optional[str] = Form(default=None),
         # Note: Literal is needed for Swagger use
         datasetId: Union[UUID, Literal[""], None] = Form(default=None, examples=[""]),
-        node_set: Optional[List[str]] = Form(default=[""], example=[""]),
+        node_set: Optional[List[str]] = Form(default=[""], examples=[""]),
         user: User = Depends(get_authenticated_user),
     ):
         """

@@ -20,6 +20,7 @@ class TextChunkerWithOverlap(Chunker):
         super().__init__(document, get_text, max_chunk_size)
         self._accumulated_chunk_data = []
         self._accumulated_size = 0
+        self._accumulated_text_length = 0
         self.chunk_overlap_ratio = chunk_overlap_ratio
         self.chunk_overlap = int(max_chunk_size * chunk_overlap_ratio)
 
@@ -28,42 +29,64 @@ class TextChunkerWithOverlap(Chunker):
         elif chunk_overlap_ratio > 0:
             paragraph_max_size = int(0.5 * chunk_overlap_ratio * max_chunk_size)
             self.get_chunk_data = lambda text: chunk_by_paragraph(
-                text, paragraph_max_size, batch_paragraphs=True
+                text,
+                paragraph_max_size,
+                max_text_length=self.max_text_length,
+                batch_paragraphs=True,
             )
         else:
             self.get_chunk_data = lambda text: chunk_by_paragraph(
-                text, self.max_chunk_size, batch_paragraphs=True
+                text,
+                self.max_chunk_size,
+                max_text_length=self.max_text_length,
+                batch_paragraphs=True,
             )
 
     def _accumulation_overflows(self, chunk_data):
         """Check if adding chunk_data would exceed max_chunk_size."""
-        return self._accumulated_size + chunk_data["chunk_size"] > self.max_chunk_size
+        next_text_length = self._accumulated_text_length + self._get_text_size(chunk_data["text"])
+        return self._accumulated_size + chunk_data["chunk_size"] > self.max_chunk_size or (
+            self.max_text_length is not None and next_text_length > self.max_text_length
+        )
+
+    def _get_text_size(self, text: str) -> int:
+        if self.max_text_length is None:
+            return len(text)
+        return len(text.encode("utf-8"))
 
     def _accumulate_chunk_data(self, chunk_data):
         """Add chunk_data to the current accumulation."""
         self._accumulated_chunk_data.append(chunk_data)
         self._accumulated_size += chunk_data["chunk_size"]
+        self._accumulated_text_length += self._get_text_size(chunk_data["text"])
 
     def _clear_accumulation(self):
         """Reset accumulation, keeping overlap chunk_data based on chunk_overlap_ratio."""
         if self.chunk_overlap == 0:
             self._accumulated_chunk_data = []
             self._accumulated_size = 0
+            self._accumulated_text_length = 0
             return
 
         # Keep chunk_data from the end that fit in overlap
         overlap_chunk_data = []
         overlap_size = 0
+        overlap_text_length = 0
 
         for chunk_data in reversed(self._accumulated_chunk_data):
-            if overlap_size + chunk_data["chunk_size"] <= self.chunk_overlap:
+            next_text_length = overlap_text_length + self._get_text_size(chunk_data["text"])
+            if overlap_size + chunk_data["chunk_size"] <= self.chunk_overlap and (
+                self.max_text_length is None or next_text_length <= self.max_text_length
+            ):
                 overlap_chunk_data.insert(0, chunk_data)
                 overlap_size += chunk_data["chunk_size"]
+                overlap_text_length = next_text_length
             else:
                 break
 
         self._accumulated_chunk_data = overlap_chunk_data
         self._accumulated_size = overlap_size
+        self._accumulated_text_length = overlap_text_length
 
     def _create_chunk(self, text, size, cut_type, chunk_id=None):
         """Create a DocumentChunk with standard metadata."""

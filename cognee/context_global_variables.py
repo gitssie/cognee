@@ -31,9 +31,9 @@ def multi_user_support_possible():
 
     graph_handler = graph_db_config.graph_dataset_database_handler
     vector_handler = vector_db_config.vector_dataset_database_handler
-    from cognee.infrastructure.databases.dataset_database_handler import (
-        supported_dataset_database_handlers,
-    )
+    import cognee.infrastructure.databases.dataset_database_handler.supported_dataset_database_handlers as _sdh_module
+
+    supported_dataset_database_handlers = _sdh_module.supported_dataset_database_handlers
 
     if graph_handler not in supported_dataset_database_handlers:
         raise EnvironmentError(

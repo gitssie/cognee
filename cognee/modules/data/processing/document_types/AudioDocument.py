@@ -11,12 +11,18 @@ class AudioDocument(Document):
         result = await LLMGateway.create_transcript(self.raw_data_location)
         return result.text
 
-    async def read(self, chunker_cls: Chunker, max_chunk_size: int):
+    async def read(
+        self,
+        chunker_cls: Chunker,
+        max_chunk_size: int,
+        max_text_length: int | None = None,
+    ):
         async def get_text():
             # Transcribe the audio file
             yield await self.create_transcript()
 
         chunker = chunker_cls(self, max_chunk_size=max_chunk_size, get_text=get_text)
+        chunker.max_text_length = max_text_length
 
         async for chunk in chunker.read():
             yield chunk

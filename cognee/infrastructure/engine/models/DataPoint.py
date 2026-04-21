@@ -47,6 +47,7 @@ class DataPoint(BaseModel):
     metadata: Optional[MetaData] = {"index_fields": []}
     type: str = Field(default_factory=lambda: DataPoint.__name__)
     belongs_to_set: Optional[List["DataPoint"] | List[str]] = None
+    data_id: Optional[UUID] = None
     source_pipeline: Optional[str] = None
     source_task: Optional[str] = None
     source_node_set: Optional[str] = None

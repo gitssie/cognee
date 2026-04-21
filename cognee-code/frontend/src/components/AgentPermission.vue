@@ -3,7 +3,7 @@
     <!-- Header -->
     <div class="perm-header row items-center no-wrap q-px-sm q-pt-xs q-pb-xs">
       <q-icon name="security" size="16px" color="warning" class="q-mr-xs" />
-      <span class="text-caption text-weight-bold text-grey-7">Permission Required</span>
+      <span class="text-caption text-weight-bold text-grey-7">{{ t('agentPermission.required') }}</span>
     </div>
 
     <q-separator color="grey-3" />
@@ -28,6 +28,9 @@
           <span class="text-weight-medium">{{ k }}:</span> {{ v }}
         </span>
       </div>
+      <div v-if="request.tool" class="text-caption text-grey-6 q-mt-xs">
+        <span class="text-weight-medium">Tool:</span> {{ request.tool.callID }}
+      </div>
     </div>
 
     <q-separator color="grey-3" />
@@ -37,7 +40,7 @@
       <q-btn
         flat no-caps dense
         color="negative"
-        label="Deny"
+        :label="t('agentPermission.deny')"
         :disable="sending"
         @click="respond('reject')"
       />
@@ -45,7 +48,7 @@
         <q-btn
           flat no-caps dense
           color="grey-7"
-          label="Allow Once"
+          :label="t('agentPermission.allowOnce')"
           :loading="sending"
           :disable="sending"
           @click="respond('once')"
@@ -53,7 +56,7 @@
         <q-btn
           no-caps unelevated
           color="primary"
-          label="Always Allow"
+          :label="t('agentPermission.alwaysAllow')"
           :loading="sending"
           :disable="sending"
           @click="respond('always')"
@@ -65,6 +68,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { PermissionRequest } from '@opencode-ai/sdk/v2';
 
 const props = defineProps<{
@@ -73,19 +77,20 @@ const props = defineProps<{
 }>();
 
 const sending = ref(false);
+const { t } = useI18n();
 
 const PERMISSION_LABELS: Record<string, string> = {
-  read: 'Read file',
-  write: 'Write file',
-  edit: 'Edit file',
-  execute: 'Execute command',
-  bash: 'Run shell command',
-  task: 'Spawn sub-agent task',
-  question: 'Ask you a question',
+  read: t('agentPermission.readFile'),
+  write: t('agentPermission.writeFile'),
+  edit: t('agentPermission.editFile'),
+  execute: t('agentPermission.executeCommand'),
+  bash: t('agentPermission.runShell'),
+  task: t('agentPermission.spawnTask'),
+  question: t('agentPermission.askQuestion'),
 };
 
 const permissionLabel = computed(() => {
-  return PERMISSION_LABELS[props.request.permission] ?? `Use tool: ${props.request.permission}`;
+  return PERMISSION_LABELS[props.request.permission] ?? t('agentPermission.useTool', { permission: props.request.permission });
 });
 
 const metadataEntries = computed(() => {

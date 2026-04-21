@@ -5,7 +5,7 @@
     <q-toolbar class="bg-white" style="border-bottom: 1px solid #e0e0e0;">
       <q-icon :name="projectIcon" size="22px" class="q-mr-sm text-primary" />
       <q-toolbar-title class="text-h6 text-weight-bold">
-        {{ project ? project.name : 'Global Rules' }}
+        {{ project ? project.name : t('projects.globalRules') }}
       </q-toolbar-title>
 
       <!-- Type Badge -->
@@ -22,10 +22,10 @@
       <!-- Actions -->
       <template v-if="project">
         <q-btn flat round dense icon="edit" size="sm" class="text-grey-6" @click="$emit('rename', project)">
-          <q-tooltip>Rename project</q-tooltip>
+          <q-tooltip>{{ t('projects.renameProjectTooltip') }}</q-tooltip>
         </q-btn>
         <q-btn flat round dense icon="delete" size="sm" class="text-negative q-ml-xs" @click="$emit('delete', project)">
-          <q-tooltip>Delete project</q-tooltip>
+          <q-tooltip>{{ t('projects.deleteProjectTooltip') }}</q-tooltip>
         </q-btn>
       </template>
     </q-toolbar>
@@ -40,8 +40,8 @@
         indicator-color="primary"
         style="border-bottom: 1px solid #e0e0e0;"
       >
-        <q-tab name="rules" icon="rule" label="Rules" />
-        <q-tab name="dataset" icon="dataset" label="Dataset" />
+        <q-tab name="rules" icon="rule" :label="t('projects.rules')" />
+        <q-tab name="dataset" icon="dataset" :label="t('projects.dataset')" />
       </q-tabs>
 
       <q-tab-panels v-model="activeTab" animated class="col bg-transparent">
@@ -70,6 +70,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { Project } from 'src/services/projects';
 import ProjectRules from './ProjectRules.vue';
 import ProjectDocuments from './ProjectDocuments.vue';
@@ -84,6 +85,7 @@ defineEmits<{
 }>();
 
 const activeTab = ref('rules');
+const { t } = useI18n();
 
 // Reset to rules tab when switching projects
     watch(() => props.project?.id, () => {
@@ -109,9 +111,9 @@ const typeBadgeColor = computed(() => {
 
 const typeBadgeLabel = computed(() => {
   switch (props.project?.type) {
-    case 'git': return 'Git';
-    case 'file': return 'Local Files';
-    default: return 'General';
+    case 'git': return t('projects.git');
+    case 'file': return t('projects.localFiles');
+    default: return t('projects.general');
   }
 });
 </script>

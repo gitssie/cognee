@@ -1,8 +1,10 @@
-from contextlib import asynccontextmanager
 import asyncio
+import os
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -40,13 +42,18 @@ def _start_opencode_agent() -> subprocess.Popen | None:
 async def lifespan(app: FastAPI):
     global _agent_proc
 
+    # Cognee-Code uses Cognee as an embedded engine; do not block requests on
+    # startup/runtime LLM or embedding probe calls.
+    os.environ.setdefault("COGNEE_SKIP_CONNECTION_TEST", "true")
+
     # Startup: Initialize cognee database
     await setup()
 
     # Startup: Create projects table (zero-invasive: uses same Base as cognee)
     from src.modules.projects.models import Project  # noqa: F401 — registers model in Base.metadata
-    from cognee.infrastructure.databases.relational.ModelBase import Base
+
     from cognee.infrastructure.databases.relational import get_relational_engine as _get_rel
+    from cognee.infrastructure.databases.relational.ModelBase import Base
 
     _rel_engine = _get_rel()
     async with _rel_engine.engine.begin() as conn:
@@ -56,8 +63,9 @@ async def lifespan(app: FastAPI):
     # IMPORTANT: pipeline_execution_mode.py does `from ... import push_to_queue` (direct
     # binding), so we must patch the name in THAT module's namespace, not in the
     # queue module itself.
-    import cognee.modules.pipelines.layers.pipeline_execution_mode as _pem
     from src.modules.knowledge.sse_event_bus import publish_for_run, unregister_pipeline_run
+
+    import cognee.modules.pipelines.layers.pipeline_execution_mode as _pem
     from cognee.modules.pipelines.models.PipelineRunInfo import (
         PipelineRunCompleted,
         PipelineRunErrored,
@@ -142,13 +150,27 @@ async def root():
     return {"message": "Welcome to Cognee-Code Backend"}
 
 
+@app.get("/api/v1/config")
+async def get_config():
+    """Expose server configuration needed by the frontend (e.g. current vector DB provider)."""
+    from cognee.infrastructure.databases.vector import get_vectordb_config
+
+    vector_config = get_vectordb_config()
+    return {
+        "vector_db_provider": vector_config.vector_db_provider,
+    }
+
+
 # --- Core Cognee API Integration ---
-from cognee.api.v1.search.routers import get_search_router
-from cognee.api.v1.datasets.routers import get_datasets_router
+from src.modules.projects.router import get_projects_router
+from src.modules.rules.router import get_rules_router
+
 from cognee.api.v1.add.routers import get_add_router
-from cognee.api.v1.ontologies.routers.get_ontology_router import get_ontology_router
+from cognee.api.v1.datasets.routers import get_datasets_router
 from cognee.api.v1.notebooks.routers.get_notebooks_router import get_notebooks_router
+from cognee.api.v1.ontologies.routers.get_ontology_router import get_ontology_router
 from cognee.api.v1.permissions.routers.get_permissions_router import get_permissions_router
+from cognee.api.v1.search.routers import get_search_router
 from cognee.api.v1.users.routers import (
     get_auth_router,
     get_register_router,
@@ -157,8 +179,6 @@ from cognee.api.v1.users.routers import (
     get_verify_router,
 )
 from cognee.api.v1.users.routers.get_visualize_router import get_visualize_router
-from src.modules.rules.router import get_rules_router
-from src.modules.projects.router import get_projects_router
 
 # Integrate Core Routers
 app.include_router(get_users_router(), prefix="/api/v1/users", tags=["users"])
@@ -181,14 +201,18 @@ app.include_router(get_verify_router(), prefix="/api/v1/auth", tags=["auth"])
 # --- Custom Modules ---
 # Note: knowledge_router removed - cognee core datasets router provides full functionality
 from src.modules.access_control.routers import router as access_control_router
-from src.modules.knowledge.sse_routers import router as sse_router
 from src.modules.knowledge.cognify_router import router as cognify_router
+from src.modules.knowledge.graph_router import get_graph_router
 from src.modules.knowledge.learn_router import get_learn_router
+from src.modules.knowledge.sse_routers import router as sse_router
+from src.modules.knowledge.vault_key_router import get_vault_key_router
 
 app.include_router(access_control_router, prefix="/api/v1", tags=["rbac"])
 app.include_router(sse_router, prefix="/api/v1", tags=["sse"])
 app.include_router(cognify_router, prefix="/api/v1/cognify", tags=["cognify"])
 app.include_router(get_learn_router(), prefix="/api/v1/knowledge/learn", tags=["knowledge"])
+app.include_router(get_graph_router(), prefix="/api/v1/datasets", tags=["datasets"])
+app.include_router(get_vault_key_router(), prefix="/api/v1/datasets", tags=["datasets"])
 
 # --- MCP (Model Context Protocol) ---
 # Mount the FastMCP Streamable-HTTP app at /mcp/ so that external MCP clients

@@ -1,4 +1,5 @@
-from typing import List, Union
+from typing import List, Optional, Union
+from uuid import UUID
 
 from cognee.infrastructure.engine import DataPoint
 from cognee.infrastructure.engine.models.Edge import Edge
@@ -23,8 +24,11 @@ class DocumentChunk(DataPoint):
     - cut_type: The type of cut that defined this chunk.
     - is_part_of: The document to which this chunk belongs.
     - contains: A list of entities or events contained within the chunk (default is None).
+    - previous_chunk_id: UUID of the preceding chunk in this document (None for first chunk).
+    - next_chunk_id: UUID of the following chunk in this document (always set; last chunk's
+      next may not be stored in the vector store yet).
     - metadata: A dictionary to hold meta information related to the chunk, including index
-    fields.
+      fields.
     """
 
     text: str
@@ -33,4 +37,6 @@ class DocumentChunk(DataPoint):
     cut_type: str
     is_part_of: Document
     contains: List[Union[Entity, Event, tuple[Edge, Entity]]] = None
+    previous_chunk_id: Optional[UUID] = None
+    next_chunk_id: Optional[UUID] = None
     metadata: dict = {"index_fields": ["text"]}

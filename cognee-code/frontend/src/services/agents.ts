@@ -1,33 +1,53 @@
-import { createOpencodeClient } from '@opencode-ai/sdk/v2';
+import { createOpencodeClient } from '@opencode-ai/sdk/v2/client';
 import type {
+  Agent,
+  AgentPartInput,
   Event,
+  FilePartInput,
+  Part,
+  Session,
   UserMessage,
   AssistantMessage,
-  TextPart,
-  ToolPart,
-  ReasoningPart,
+  Command,
   QuestionRequest,
   PermissionRequest,
   QuestionAnswer,
+  Todo,
   TextPartInput,
 } from '@opencode-ai/sdk/v2';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const OPENCODE_BASE_URL = import.meta.env.VITE_OPENCODE_URL ?? 'http://localhost:4097';
+const OPENCODE_BASE_URL = (import.meta.env.VITE_OPENCODE_URL ?? '/opencode').replace(/\/+$/, '');
 export const AGENT_NAME = 'cognee-coder';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type { UserMessage, AssistantMessage };
 
-export type DisplayPart = TextPart | ToolPart | ReasoningPart;
+export type DisplayPart = Part;
 
 export interface SessionItem {
   id: string;
   title: string;
   time: Date;
+  parentID?: string;
+  revert?: Session['revert'];
 }
+
+export interface PromptOptions {
+  model?: {
+    providerID: string;
+    modelID: string;
+  };
+  messageID?: string;
+  variant?: string;
+  system?: string;
+  tools?: Record<string, boolean>;
+  noReply?: boolean;
+}
+
+export type PromptPartInput = TextPartInput | AgentPartInput | FilePartInput;
 
 /** Shape of each entry returned by client.session.messages */
 export type RawMessageEntry = {
@@ -37,32 +57,37 @@ export type RawMessageEntry = {
 
 // ── SDK Client (single shared v2 instance) ────────────────────────────────────
 
-export const opencodeClient = createOpencodeClient({ baseUrl: OPENCODE_BASE_URL });
+export const opencodeClient = createOpencodeClient({
+  baseUrl: OPENCODE_BASE_URL,
+  throwOnError: true,
+});
 
 // ── Session operations ─────────────────────────────────────────────────────────
 
 export const AgentService = {
+  mapSession(session: { id: string; title?: string; parentID?: string; time?: { created?: number }; revert?: Session['revert'] }): SessionItem {
+    return {
+      id: session.id,
+      title: session.title ?? 'Untitled',
+      time: new Date(session.time?.created ?? Date.now()),
+      ...(session.parentID ? { parentID: session.parentID } : {}),
+      ...(session.revert ? { revert: session.revert } : {}),
+    };
+  },
+
   // ── Session CRUD ──────────────────────────────────────────────────────────
 
   async createSession(): Promise<SessionItem> {
     const res = await opencodeClient.session.create({});
     const session = (res.data ?? res) as { id: string; title?: string; time?: { created?: number } };
-    return {
-      id: session.id,
-      title: session.title ?? 'Untitled',
-      time: new Date(session.time?.created ?? Date.now()),
-    };
+    return this.mapSession(session);
   },
 
   async listSessions(): Promise<SessionItem[]> {
     const res = await opencodeClient.session.list({ roots: true });
     const list = (res.data ?? []) as { id: string; title?: string; time?: { created?: number } }[];
     return list
-      .map(s => ({
-        id: s.id,
-        title: s.title ?? 'Untitled',
-        time: new Date(s.time?.created ?? Date.now()),
-      }))
+      .map((s) => this.mapSession(s))
       .sort((a, b) => b.time.getTime() - a.time.getTime());
   },
 
@@ -70,23 +95,78 @@ export const AgentService = {
     await opencodeClient.session.delete({ sessionID: sessionId });
   },
 
+  async getSession(sessionId: string): Promise<SessionItem> {
+    const res = await opencodeClient.session.get({ sessionID: sessionId });
+    const session = (res.data ?? res) as Session;
+    return this.mapSession(session);
+  },
+
   // ── Message operations ────────────────────────────────────────────────────
 
-  async loadMessages(sessionId: string): Promise<RawMessageEntry[]> {
-    const res = await opencodeClient.session.messages({ sessionID: sessionId });
+  async loadMessages(sessionId: string, options?: { limit?: number; before?: string }): Promise<RawMessageEntry[]> {
+    const res = await opencodeClient.session.messages({
+      sessionID: sessionId,
+      ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.before ? { before: options.before } : {}),
+    });
     return (res.data ?? []) as RawMessageEntry[];
   },
 
-  async promptAsync(sessionId: string, parts: TextPartInput[]): Promise<void> {
+  async loadTodos(sessionId: string): Promise<Todo[]> {
+    const res = await opencodeClient.session.todo({ sessionID: sessionId });
+    return res.data ?? [];
+  },
+
+  async listCommands(): Promise<Command[]> {
+    const res = await opencodeClient.command.list();
+    return ((res as { data?: Command[] }).data ?? []);
+  },
+
+  async listAgents(): Promise<Agent[]> {
+    const res = await opencodeClient.app.agents();
+    return ((res as { data?: Agent[] }).data ?? []);
+  },
+
+  async promptAsync(sessionId: string, parts: PromptPartInput[], options?: PromptOptions): Promise<void> {
     await opencodeClient.session.promptAsync({
       sessionID: sessionId,
       agent: AGENT_NAME,
+      ...(options?.messageID ? { messageID: options.messageID } : {}),
       parts,
+      ...(options?.model ? { model: options.model } : {}),
+      ...(options?.variant ? { variant: options.variant } : {}),
+      ...(options?.system ? { system: options.system } : {}),
+      ...(options?.tools ? { tools: options.tools } : {}),
+      ...(options?.noReply !== undefined ? { noReply: options.noReply } : {}),
+    });
+  },
+
+  async runCommand(sessionId: string, command: string, args: string, options?: Omit<PromptOptions, 'system' | 'tools' | 'noReply'> & { parts?: FilePartInput[] }): Promise<void> {
+    await opencodeClient.session.command({
+      sessionID: sessionId,
+      command,
+      arguments: args,
+      agent: AGENT_NAME,
+      ...(options?.parts?.length ? { parts: options.parts } : {}),
+      ...(options?.model ? { model: `${options.model.providerID}/${options.model.modelID}` } : {}),
+      ...(options?.variant ? { variant: options.variant } : {}),
     });
   },
 
   async abort(sessionId: string): Promise<void> {
     await opencodeClient.session.abort({ sessionID: sessionId });
+  },
+
+  async revertMessage(sessionId: string, messageId: string, partId?: string): Promise<void> {
+    await opencodeClient.session.revert({
+      sessionID: sessionId,
+      messageID: messageId,
+      ...(partId ? { partID: partId } : {}),
+    });
+  },
+
+  async unrevert(sessionId: string): Promise<void> {
+    await opencodeClient.session.unrevert({ sessionID: sessionId });
   },
 
   // ── Compact (summarize) ───────────────────────────────────────────────────

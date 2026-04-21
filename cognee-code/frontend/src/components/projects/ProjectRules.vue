@@ -8,14 +8,14 @@
         {{ title }}
         <span class="text-weight-regular text-grey-6 q-ml-xs">({{ rules.length }})</span>
       </q-toolbar-title>
-      <q-btn color="primary" icon="add" label="Add Rule" size="sm" unelevated @click="showAddDialog = true" />
+      <q-btn color="primary" icon="add" :label="t('projects.addRule')" size="sm" unelevated @click="showAddDialog = true" />
     </q-toolbar>
     <q-separator />
 
     <!-- Loading -->
     <div v-if="loading" class="col column flex-center">
       <q-spinner color="primary" size="40px" />
-      <div class="text-caption text-grey-5 q-mt-sm">Loading rules...</div>
+      <div class="text-caption text-grey-5 q-mt-sm">{{ t('projects.loadingRules') }}</div>
     </div>
 
     <!-- Rules Table -->
@@ -31,7 +31,7 @@
           <thead class="thead-sticky text-left">
             <tr>
               <th style="width: 40px;">#</th>
-              <th>Rule</th>
+              <th>{{ t('projects.addRule') }}</th>
               <th style="width: 48px;"></th>
             </tr>
           </thead>
@@ -43,7 +43,7 @@
             <td>{{ rule.text }}</td>
             <td>
               <q-btn flat round dense icon="delete" color="negative" size="sm" @click="handleDelete(rule.id)">
-                <q-tooltip>Delete rule</q-tooltip>
+                 <q-tooltip>{{ t('projects.deleteRuleTooltip') }}</q-tooltip>
               </q-btn>
             </td>
           </tr>
@@ -54,12 +54,12 @@
     <!-- Empty State -->
     <div v-else class="col column flex-center text-grey-5">
       <q-icon name="rule" size="56px" color="grey-4" class="q-mb-md" />
-      <div class="text-subtitle2">No rules yet</div>
+      <div class="text-subtitle2">{{ t('projects.noRulesYet') }}</div>
       <div class="text-caption q-mt-xs">
-        {{ projectId ? 'Add rules specific to this project' : 'Add global coding rules for all projects' }}
+        {{ projectId ? t('projects.addProjectRules') : t('projects.addGlobalRules') }}
       </div>
       <q-btn
-        outline color="primary" icon="add" label="Add First Rule"
+        outline color="primary" icon="add" :label="t('projects.addFirstRule')"
         class="q-mt-lg" size="sm"
         @click="showAddDialog = true"
       />
@@ -70,7 +70,7 @@
       <q-card style="width: 700px; max-width: 95vw;" class="column">
         <q-toolbar>
           <q-toolbar-title>
-            Add Rule
+            {{ t('projects.addRuleTitle') }}
             <span class="text-caption text-grey-5 q-ml-sm">→ {{ title }}</span>
           </q-toolbar-title>
           <q-btn flat round dense icon="close" @click="showAddDialog = false" />
@@ -78,7 +78,7 @@
         <q-separator />
         <q-card-section class="q-pt-sm" style="min-height: 0;">
           <div class="text-caption text-grey-6 q-mb-sm">
-            Describe the rule in natural language. Be specific and clear.
+            {{ t('projects.ruleEditorHint') }}
           </div>
           <MdEditor
             v-model="newRuleText"
@@ -86,13 +86,13 @@
             :preview="false"
             :toolbars="toolbars"
             style="height: 300px;"
-            placeholder="# Rule Title&#10;&#10;Describe your coding rule here...&#10;&#10;```python&#10;# Example&#10;def good_function():&#10;    pass&#10;```"
+             :placeholder="t('projects.ruleEditorPlaceholder')"
           />
         </q-card-section>
         <q-card-actions align="right" class="q-pt-none q-pb-md q-pr-md">
-          <q-btn flat label="Cancel" @click="showAddDialog = false" />
+          <q-btn flat :label="t('common.cancel')" @click="showAddDialog = false" />
           <q-btn
-            unelevated color="primary" label="Add Rule"
+            unelevated color="primary" :label="t('projects.addRule')"
             :loading="adding"
             :disable="!newRuleText.trim()"
             @click="handleAdd"
@@ -107,6 +107,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useQuasar } from 'quasar';
+import { useI18n } from 'vue-i18n';
 import { MdEditor, type ToolbarNames } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { RulesService, type Rule } from 'src/services/rules';
@@ -117,6 +118,7 @@ const props = defineProps<{
 }>();
 
 const $q = useQuasar();
+const { t } = useI18n();
 
 const rules = ref<Rule[]>([]);
 const loading = ref(false);
@@ -145,7 +147,7 @@ async function fetchRules() {
   try {
     rules.value = await RulesService.getRules(props.projectId ?? undefined);
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to load rules' });
+    $q.notify({ color: 'negative', message: t('projects.failedLoadRules') });
   } finally {
     loading.value = false;
   }
@@ -165,9 +167,9 @@ async function handleAdd() {
     await fetchRules();
     showAddDialog.value = false;
     newRuleText.value = '';
-    $q.notify({ color: 'positive', message: 'Rule added' });
+    $q.notify({ color: 'positive', message: t('projects.ruleAdded') });
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to add rule' });
+    $q.notify({ color: 'negative', message: t('projects.failedAddRule') });
   } finally {
     adding.value = false;
   }
@@ -177,9 +179,9 @@ async function handleDelete(ruleId: string) {
   try {
     await RulesService.deleteRule(ruleId, props.projectId ?? undefined);
     rules.value = rules.value.filter((r) => r.id !== ruleId);
-    $q.notify({ color: 'positive', message: 'Rule deleted' });
+    $q.notify({ color: 'positive', message: t('projects.ruleDeleted') });
   } catch {
-    $q.notify({ color: 'negative', message: 'Failed to delete rule' });
+    $q.notify({ color: 'negative', message: t('projects.failedDeleteRule') });
   }
 }
 </script>

@@ -2,7 +2,7 @@
   <q-dialog v-model="isOpen" persistent>
     <q-card style="min-width: 500px; max-width: 600px;">
       <q-toolbar>
-        <q-toolbar-title>Add Content</q-toolbar-title>
+        <q-toolbar-title>{{ t('knowledge.addContentTitle') }}</q-toolbar-title>
         <q-btn icon="close" flat round dense v-close-popup @click="onCancel" :disable="isUploading" />
       </q-toolbar>
 
@@ -37,8 +37,8 @@
         align="justify"
         :disable="isUploading"
       >
-        <q-tab name="file" icon="upload_file" label="File" />
-        <q-tab name="text" icon="edit_note" label="Text" />
+        <q-tab name="file" icon="upload_file" :label="t('knowledge.file')" />
+        <q-tab name="text" icon="edit_note" :label="t('knowledge.addText')" />
         <q-tab name="url" icon="link" label="URL" />
       </q-tabs>
 
@@ -56,12 +56,12 @@
           >
             <q-icon name="cloud_upload" size="64px" color="grey-5" class="q-mb-md" />
             <div class="text-subtitle1 text-grey-7 q-mb-sm">
-              Drag & drop files here
+              {{ t('knowledge.dragDropFiles') }}
             </div>
-            <div class="text-caption text-grey-5 q-mb-md">or</div>
+            <div class="text-caption text-grey-5 q-mb-md">{{ t('knowledge.or') }}</div>
             <q-file
               v-model="fileInput"
-              label="Browse files"
+              :label="t('knowledge.browseFiles')"
               outlined
               dense
               class="file-input-btn"
@@ -89,7 +89,7 @@
           </div>
 
           <div class="text-caption text-grey-5 q-mt-md">
-            Supported formats: PDF, TXT, MD, DOCX, CSV, JSON, and more
+            {{ t('knowledge.supportedFormats') }}
           </div>
         </q-tab-panel>
 
@@ -98,14 +98,14 @@
           <q-input 
             v-model="textInput" 
             type="textarea" 
-            label="Enter or paste text content"
+            :label="t('knowledge.enterTextContent')"
             outlined
             :rows="8"
             counter
             maxlength="100000"
           />
           <div class="text-caption text-grey-5 q-mt-sm">
-            Paste articles, notes, or any text content you want to add to your knowledge base.
+            {{ t('knowledge.textContentHint') }}
           </div>
         </q-tab-panel>
 
@@ -113,16 +113,16 @@
         <q-tab-panel name="url" class="q-pa-md">
           <q-input 
             v-model="urlInput" 
-            label="Enter URL"
+            :label="t('knowledge.enterUrl')"
             outlined
-            placeholder="https://example.com/article"
+            :placeholder="t('knowledge.urlPlaceholder')"
           >
             <template v-slot:prepend>
               <q-icon name="link" />
             </template>
           </q-input>
           <div class="text-caption text-grey-5 q-mt-sm">
-            Enter a web URL to fetch and add its content to your knowledge base.
+            {{ t('knowledge.urlHint') }}
           </div>
         </q-tab-panel>
       </q-tab-panels>
@@ -132,7 +132,7 @@
       <q-card-actions align="right" class="q-pa-md">
         <q-btn 
           flat 
-          label="Cancel" 
+          :label="t('common.cancel')" 
           color="grey" 
           @click="onCancel" 
           :disable="isUploading"
@@ -153,6 +153,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -170,11 +171,12 @@ const textInput = ref('');
 const urlInput = ref('');
 const fileInput = ref<File | null>(null);
 const isDragOver = ref(false);
+const { t } = useI18n();
 
 // Upload state - controlled by parent
 const isUploading = ref(false);
 const uploadProgress = ref(0);
-const uploadStatusText = ref('Uploading...');
+const uploadStatusText = ref(t('knowledge.uploading'));
 
 const isOpen = computed({
   get: () => props.modelValue,
@@ -189,12 +191,12 @@ const isValid = computed(() => {
 });
 
 const submitButtonLabel = computed(() => {
-  if (isUploading.value) return 'Uploading...';
+  if (isUploading.value) return t('knowledge.uploading');
   switch (tab.value) {
-    case 'file': return 'Upload File';
-    case 'text': return 'Add Text';
-    case 'url': return 'Fetch URL';
-    default: return 'Add';
+    case 'file': return t('knowledge.uploadFile');
+    case 'text': return t('knowledge.addText');
+    case 'url': return t('knowledge.fetchUrl');
+    default: return t('knowledge.add');
   }
 });
 
@@ -245,13 +247,13 @@ function handleFileSelect(file: File | null) {
 
 function onSubmit() {
   if (tab.value === 'text' && textInput.value.trim()) {
-    startUpload('Processing text...');
+    startUpload(t('knowledge.processingText'));
     emit('add-text', textInput.value.trim());
   } else if (tab.value === 'url' && isValidUrl(urlInput.value)) {
-    startUpload('Fetching URL...');
+    startUpload(t('knowledge.fetchingUrl'));
     emit('add-url', urlInput.value);
   } else if (tab.value === 'file' && fileInput.value) {
-    startUpload('Uploading file...');
+    startUpload(t('knowledge.uploadingFile'));
     emit('add-file', fileInput.value);
   }
 }
@@ -281,7 +283,7 @@ function finishUpload() {
   }
   
   uploadProgress.value = 100;
-  uploadStatusText.value = 'Complete!';
+  uploadStatusText.value = t('knowledge.complete');
   
   // Brief delay before closing
   setTimeout(() => {

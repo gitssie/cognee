@@ -42,6 +42,12 @@ from cognee.api.v1.users.routers import (
     get_user_id_by_email_router,
 )
 from cognee.modules.users.methods.get_authenticated_user import REQUIRE_AUTHENTICATION
+from cognee.infrastructure.databases.vector.config import get_vectordb_config
+from cognee.api.v1.cognify.cognify import (
+    MUNINN_DEFAULT_CHUNK_OVERLAP_RATIO,
+    MUNINN_DEFAULT_CHUNK_SIZE,
+    MUNINN_MAX_ENGRAM_CONTENT_LENGTH,
+)
 
 # Ensure application logging is configured for container stdout/stderr
 setup_logging()
@@ -264,6 +270,19 @@ app.include_router(
     prefix="/health",
     tags=["health"],
 )
+
+
+@app.get("/api/v1/config")
+async def get_runtime_config():
+    vector_db_provider = get_vectordb_config().vector_db_provider.lower()
+    return {
+        "vector_db_provider": vector_db_provider,
+        "muninn": {
+            "default_chunk_size": MUNINN_DEFAULT_CHUNK_SIZE,
+            "default_chunk_overlap_ratio": MUNINN_DEFAULT_CHUNK_OVERLAP_RATIO,
+            "max_text_length": MUNINN_MAX_ENGRAM_CONTENT_LENGTH,
+        },
+    }
 
 
 @app.get("/")

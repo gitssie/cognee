@@ -3,33 +3,42 @@
     <!-- Header (always visible) -->
     <div class="reasoning-header row items-center no-wrap" @click="open = !open">
       <q-icon name="psychology_alt" size="13px" color="amber-7" class="q-mr-xs flex-shrink-0" />
-      <span class="reasoning-title col">{{ streaming ? 'Thinking…' : 'Thoughts' }}</span>
+      <span class="reasoning-title col">{{ streaming ? t('agentReasoning.thinking') : t('agentReasoning.thoughts') }}</span>
       <q-spinner-dots v-if="streaming" size="12px" color="amber-6" class="q-mx-xs flex-shrink-0" />
       <q-icon :name="open ? 'expand_less' : 'expand_more'" size="13px" color="grey-5" class="flex-shrink-0" />
     </div>
 
     <!-- Expanded content -->
-    <div v-if="open" class="reasoning-detail">
-      <pre class="reasoning-text">{{ part.text }}</pre>
+    <div v-if="open && displayText" class="reasoning-detail">
+      <pre class="reasoning-text">{{ displayText }}</pre>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { ReasoningPart } from '@opencode-ai/sdk/v2';
 
 interface Props {
   part: ReasoningPart;
+  text?: string;
 }
 
 const props = defineProps<Props>();
+const { t } = useI18n();
+const displayText = computed(() => (props.text ?? props.part.text ?? '').trim());
 // streaming = reasoning still in progress (time.end not yet set)
 const streaming = computed(() => !props.part.time?.end);
 // auto-expand while streaming, collapse once done
-const open = ref(streaming.value);
+const open = ref(streaming.value && !!displayText.value);
 watch(streaming, (isStreaming) => {
   if (!isStreaming) open.value = false;
+});
+watch(displayText, (value) => {
+  if (streaming.value && value) {
+    open.value = true;
+  }
 });
 </script>
 

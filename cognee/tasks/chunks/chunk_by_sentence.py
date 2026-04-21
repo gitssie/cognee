@@ -1,7 +1,12 @@
+import re
 from uuid import uuid4, UUID
-from typing import Optional, Iterator, Tuple
+from typing import Any, Optional, Iterator, Tuple
+
 from .chunk_by_word import chunk_by_word
 from cognee.infrastructure.databases.vector.embeddings import get_embedding_engine
+
+
+FALLBACK_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+")
 
 
 def get_word_size(word: str) -> int:
@@ -22,11 +27,15 @@ def get_word_size(word: str) -> int:
         - int: The number of tokens representing the word, typically an integer, depending
           on the tokenizer's output.
     """
-    embedding_engine = get_embedding_engine()
-    if embedding_engine.tokenizer:
-        return embedding_engine.tokenizer.count_tokens(word)
+    embedding_engine: Any = get_embedding_engine()
+    tokenizer = getattr(embedding_engine, "tokenizer", None)
+    if tokenizer:
+        return tokenizer.count_tokens(word)
     else:
-        return 1
+        # Without a tokenizer, estimate tokens by counting CJK characters and
+        # ASCII word runs so chunking still behaves reasonably for Chinese text.
+        matches = FALLBACK_TOKEN_PATTERN.findall(word)
+        return max(1, len(matches))
 
 
 def chunk_by_sentence(
@@ -55,6 +64,7 @@ def chunk_by_sentence(
     sentence_size = 0
     section_end = False
     word_type_state = None
+    word = ""
 
     # the yielded word_type_state is identical to word_type, except when
     # the word type is 'word', the word doesn't contain any letters
