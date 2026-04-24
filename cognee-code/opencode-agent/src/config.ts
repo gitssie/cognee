@@ -1,73 +1,64 @@
-import { existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+import type { Config, ServerOptions } from "@opencode-ai/sdk/v2";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const COGNEE_MCP_URL =
-    process.env.COGNEE_MCP_URL ?? "http://localhost:8000/mcp/";
-const COGNEE_API_TOKEN = process.env.COGNEE_API_TOKEN;
+const DEFAULT_OPENCODE_HOSTNAME = "127.0.0.1";
+const DEFAULT_OPENCODE_PORT = 4096;
+const DEFAULT_OPENCODE_TIMEOUT = 30000;
+const DEFAULT_COGNEE_MCP_URL = "http://localhost:8000/mcp/";
+const DEFAULT_ROUTER_HEALTH_PORT = 3005;
 
-/** Build CLI args for `opencode serve` */
-export function buildOpencodeArgs(): { args: string[]; port: number } {
-    const hostname = process.env.OPENCODE_HOSTNAME ?? "0.0.0.0";
-    const port = Number(process.env.OPENCODE_PORT ?? 4097);
-    const args = [
-        "serve",
-        `--hostname=${hostname}`,
-        `--port=${port}`,
-        "--print-logs",
-    ];
-    return { args, port };
+export interface RouterRuntimePaths {
+    rootDir: string;
+    workspaceDir: string;
+    dataDir: string;
+    logDir: string;
+    configPath: string;
 }
 
-/** Build env vars for the opencode child process */
-export function buildOpencodeEnv(): NodeJS.ProcessEnv {
-    return {
-        ...process.env,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(buildOpencodeConfig()),
-        // Point the opencode wrapper script directly to the native binary so it
-        // skips the CJS require() block that fails under Node 22 ESM mode.
-        OPENCODE_BIN_PATH: resolveNativeOpencodeBin(),
-    };
+interface RouterConfigFile {
+    version: number;
+    opencodeDirectory?: string;
+    healthPort?: number;
+    plugin?: unknown;
+    channels?: unknown;
+    groupsEnabled?: boolean;
 }
 
-function resolveNativeOpencodeBin(): string {
-    if (process.env.OPENCODE_BIN_PATH) return process.env.OPENCODE_BIN_PATH;
-    const candidates = [
-        "/root/.bun/install/global/node_modules/opencode-linux-x64/bin/opencode",
-        "/root/.bun/install/global/node_modules/opencode-linux-x64-baseline/bin/opencode",
-    ];
-    for (const c of candidates) {
-        if (existsSync(c)) return c;
+function parseInteger(value: string | undefined, fallback: number): number {
+    if (!value) {
+        return fallback;
     }
-    return "opencode";
+
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function buildOpencodeConfig() {
+export function buildOpencodeConfig(): Config {
     const mcpHeaders: Record<string, string> = {};
-    if (COGNEE_API_TOKEN) {
-        mcpHeaders["Authorization"] = `Bearer ${COGNEE_API_TOKEN}`;
+    const cogneeApiToken = process.env.COGNEE_API_TOKEN?.trim();
+
+    if (cogneeApiToken) {
+        mcpHeaders.Authorization = `Bearer ${cogneeApiToken}`;
     }
 
     return {
-        // MCP: connect cognee-code Python backend
         mcp: {
             cognee: {
                 type: "remote" as const,
-                url: COGNEE_MCP_URL,
+                url: process.env.COGNEE_MCP_URL?.trim() || DEFAULT_COGNEE_MCP_URL,
                 enabled: true,
                 ...(Object.keys(mcpHeaders).length > 0
                     ? { headers: mcpHeaders }
                     : {}),
             },
         },
-
-        // M9-2: Register the CogneeProjectPlugin for automatic rules + dataset injection
         plugin: [`file://${join(__dirname, "plugin", "index.ts")}`],
-
-        // Custom agent: cognee-coder — a coding assistant with persistent memory
         agent: {
             "cognee-coder": {
                 name: "cognee-coder",
@@ -98,5 +89,80 @@ function buildOpencodeConfig() {
                 },
             },
         },
+    };
+}
+
+export function buildOpencodeOptions(): ServerOptions {
+    return {
+        hostname: process.env.OPENCODE_HOST?.trim() || DEFAULT_OPENCODE_HOSTNAME,
+        port: parseInteger(process.env.OPENCODE_PORT, DEFAULT_OPENCODE_PORT),
+        timeout: parseInteger(process.env.OPENCODE_START_TIMEOUT_MS, DEFAULT_OPENCODE_TIMEOUT),
+        config: buildOpencodeConfig(),
+    };
+}
+
+export function getRouterRuntimePaths(): RouterRuntimePaths {
+    const rootDir = process.env.OPENCODE_ROUTER_ROOT_DIR?.trim()
+        ? resolve(process.env.OPENCODE_ROUTER_ROOT_DIR.trim())
+        : resolve(__dirname, "..", ".tmp", "opencode-router");
+    const workspaceDir = join(rootDir, "workspace");
+    const dataDir = process.env.OPENCODE_ROUTER_DATA_DIR?.trim()
+        ? resolve(process.env.OPENCODE_ROUTER_DATA_DIR.trim())
+        : join(rootDir, "data");
+    const logDir = process.env.OPENCODE_ROUTER_LOG_DIR?.trim()
+        ? resolve(process.env.OPENCODE_ROUTER_LOG_DIR.trim())
+        : join(dataDir, "logs");
+    const configPath = process.env.OPENCODE_ROUTER_CONFIG_PATH?.trim()
+        ? resolve(process.env.OPENCODE_ROUTER_CONFIG_PATH.trim())
+        : join(dataDir, "opencode-router.json");
+
+    return {
+        rootDir,
+        workspaceDir,
+        dataDir,
+        logDir,
+        configPath,
+    };
+}
+
+function readRouterConfigFile(configPath: string): RouterConfigFile {
+    try {
+        return JSON.parse(readFileSync(configPath, "utf8")) as RouterConfigFile;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return { version: 1 };
+        }
+
+        throw error;
+    }
+}
+
+export function ensureRouterRuntimeConfig(paths: RouterRuntimePaths): RouterConfigFile {
+    mkdirSync(paths.workspaceDir, { recursive: true });
+    mkdirSync(paths.logDir, { recursive: true });
+
+    const current = readRouterConfigFile(paths.configPath);
+    const explicitOpencodeDirectory = current.opencodeDirectory?.trim() || process.env.OPENCODE_DIRECTORY?.trim();
+    const next: RouterConfigFile = {
+        ...current,
+        version: 1,
+        healthPort: current.healthPort ?? parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT, DEFAULT_ROUTER_HEALTH_PORT),
+        ...(explicitOpencodeDirectory ? { opencodeDirectory: explicitOpencodeDirectory } : {}),
+    };
+
+    writeFileSync(paths.configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    return next;
+}
+
+export function buildRouterEnv(serverUrl: string, paths: RouterRuntimePaths): NodeJS.ProcessEnv {
+    const config = ensureRouterRuntimeConfig(paths);
+
+    return {
+        ...process.env,
+        OPENCODE_URL: serverUrl,
+        OPENCODE_ROUTER_DATA_DIR: paths.dataDir,
+        OPENCODE_ROUTER_CONFIG_PATH: paths.configPath,
+        OPENCODE_ROUTER_LOG_FILE: join(paths.logDir, "opencode-router.log"),
+        OPENCODE_ROUTER_HEALTH_PORT: String(config.healthPort ?? DEFAULT_ROUTER_HEALTH_PORT),
     };
 }

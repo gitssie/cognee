@@ -1,21 +1,29 @@
 {
-  "name": "opencode-agent",
-  "version": "0.1.0",
-  "description": "OpenCode Agent service for cognee-code — wraps @opencode-ai/sdk to provide a local AI coding assistant with cognee MCP tools",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "start": "bun run src/index.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@opencode-ai/plugin": "^1.2.10",
-    "@opencode-ai/sdk": "latest",
-    "zod": "^4.3.6"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.0.0"
-  }
+    "name": "opencode-agent",
+    "version": "0.1.0",
+    "description": "OpenCode Agent service for cognee-code — wraps @opencode-ai/sdk to provide a local AI coding assistant with cognee MCP tools",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "bun run --hot src/index.ts",
+        "start": "bun run src/index.ts",
+        "typecheck": "tsc --noEmit",
+        "router:dev": "bun run vendor/opencode-router/src/cli.ts",
+        "router:typecheck": "tsc -p vendor/opencode-router/tsconfig.json --noEmit"
+    },
+    "dependencies": {
+        "@opencode-ai/plugin": "^1.2.10",
+        "@opencode-ai/sdk": "latest",
+        "commander": "^12.1.0",
+        "dotenv": "^16.4.7",
+        "grammy": "^1.39.3",
+        "openclaw": "file:./vendor/opencode-router/shims/openclaw",
+        "pino": "^9.6.0",
+        "zod": "^4.3.6"
+    },
+    "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^22.10.2",
+        "typescript": "^5.0.0"
+    }
 }

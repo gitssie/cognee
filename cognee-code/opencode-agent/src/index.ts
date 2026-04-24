@@ -1,92 +1,32 @@
-import { spawn } from "node:child_process"
-import { createOpencodeClient } from "@opencode-ai/sdk"
-import { buildOpencodeArgs, buildOpencodeEnv } from "./config"
+import "dotenv/config";
 
-const controller = new AbortController()
+import { createOpencode, type Agent } from "@opencode-ai/sdk/v2";
 
-for (const sig of ["SIGINT", "SIGTERM"] as const) {
-  process.on(sig, () => {
-    console.error(`[opencode-agent] Received ${sig}, shutting down...`)
-    controller.abort()
-  })
-}
+import { buildOpencodeOptions, buildRouterEnv, getRouterRuntimePaths } from "./config";
+import { startRouter } from "./router";
 
-const { args, port } = buildOpencodeArgs()
-const env = buildOpencodeEnv()
+const opencode = await createOpencode(buildOpencodeOptions());
+const routerPaths = getRouterRuntimePaths();
+Object.assign(process.env, buildRouterEnv(opencode.server.url, routerPaths));
+const router = await startRouter();
 
-// Use the resolved native binary path from env to avoid running the CJS
-// wrapper through Node.js in ESM mode (which breaks require()).
-const opencodeBin = env.OPENCODE_BIN_PATH ?? "opencode"
-console.error(`[opencode-agent] Starting OpenCode server on port ${port}...`)
+const shutdown = () => {
+    void router.stop().finally(() => {
+        opencode.server.close();
+    });
+};
 
-const proc = spawn(opencodeBin, args, {
-  signal: controller.signal,
-  env,
-})
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
 
-// Forward opencode logs to our stderr in real-time
-proc.stderr.pipe(process.stderr)
+const agents = await opencode.client.app.agents();
+const availableAgents = (agents.data ?? []).map((agent: Agent) => agent.name);
 
-// Parse the server URL from stdout, then keep forwarding stdout too
-const serverUrl = await new Promise<string>((resolve, reject) => {
-  const timeout = Number(process.env.OPENCODE_TIMEOUT ?? 15_000)
-  const id = setTimeout(() => {
-    reject(new Error(`Timeout waiting for opencode server to start after ${timeout}ms`))
-  }, timeout)
+console.log(`OpenCode server running at ${opencode.server.url}`);
+console.log(`Available agents: ${availableAgents.join(", ") || "none"}`);
+console.log(`OpenCode router config: ${router.configPath}`);
+console.log(`OpenCode router logs:   ${router.logPath}`);
 
-  let buf = ""
-  proc.stdout.on("data", (chunk: Buffer) => {
-    buf += chunk.toString()
-    const lines = buf.split("\n")
-    // Keep the last incomplete line in buf
-    buf = lines.pop() ?? ""
-    for (const line of lines) {
-      process.stdout.write(line + "\n")
-      if (line.startsWith("opencode server listening")) {
-        const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
-        if (match) {
-          clearTimeout(id)
-          resolve(match[1]!)
-        }
-      }
-    }
-  })
-
-  proc.on("exit", (code) => {
-    clearTimeout(id)
-    reject(new Error(`opencode exited with code ${code}`))
-  })
-
-  proc.on("error", (err) => {
-    clearTimeout(id)
-    reject(err)
-  })
-
-  controller.signal.addEventListener("abort", () => {
-    clearTimeout(id)
-    reject(new Error("Aborted"))
-  })
-})
-
-// After URL is resolved, keep piping stdout
-proc.stdout.pipe(process.stdout)
-
-console.error(`[opencode-agent] OpenCode server ready at ${serverUrl}`)
-
-const client = createOpencodeClient({ baseUrl: serverUrl })
-try {
-  const mcpStatus = await client.mcp.status()
-  const connections = (mcpStatus as Record<string, unknown>)?.data ?? mcpStatus
-  console.error("[opencode-agent] MCP connections:", JSON.stringify(connections, null, 2))
-} catch (e) {
-  console.error("[opencode-agent] Could not check MCP status:", e)
-}
-
-await new Promise<void>((resolve) => {
-  controller.signal.addEventListener("abort", () => {
-    proc.kill()
-    resolve()
-  })
-})
-
-console.error("[opencode-agent] Shutdown complete.")
+await new Promise<void>(() => {
+    // Keep the Bun process alive until it receives a shutdown signal.
+});

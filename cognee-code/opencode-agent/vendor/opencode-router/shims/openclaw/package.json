@@ -1,0 +1,32 @@
+{
+  "name": "openclaw",
+  "version": "0.0.0-shim",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./plugin-sdk": {
+      "types": "./plugin-sdk/index.d.ts",
+      "default": "./plugin-sdk/index.js"
+    },
+    "./plugin-sdk/core": {
+      "types": "./plugin-sdk/core.d.ts",
+      "default": "./plugin-sdk/core.js"
+    },
+    "./plugin-sdk/setup": {
+      "types": "./plugin-sdk/setup.d.ts",
+      "default": "./plugin-sdk/setup.js"
+    },
+    "./plugin-sdk/runtime-store": {
+      "types": "./plugin-sdk/runtime-store.d.ts",
+      "default": "./plugin-sdk/runtime-store.js"
+    },
+    "./plugin-sdk/account-id": {
+      "types": "./plugin-sdk/account-id.d.ts",
+      "default": "./plugin-sdk/account-id.js"
+    },
+    "./plugin-sdk/channel-policy": {
+      "types": "./plugin-sdk/channel-policy.d.ts",
+      "default": "./plugin-sdk/channel-policy.js"
+    }
+  }
+}
