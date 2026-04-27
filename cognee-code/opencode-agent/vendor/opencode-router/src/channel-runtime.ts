@@ -234,6 +234,7 @@ export type ChannelRuntimeDeps = {
     identityId: string;
     peerId: string;
     text: string;
+    agentId?: string;
     parts?: InboundMessagePart[];
     raw: unknown;
     fromMe?: boolean;
@@ -335,6 +336,12 @@ export function createChannelRuntime(deps: ChannelRuntimeDeps) {
           }
 
           const mediaCount = inboundParts.filter((p) => p.type === "media").length;
+          const route = resolveAgentRoute({
+            cfg: options.cfg,
+            channel,
+            accountId,
+            peer: { kind: "direct", id: peerId },
+          });
           logger.info({ channel, accountId, peerId, mediaCount }, "channel-runtime: delegating to bridge handleInbound");
 
           try {
@@ -343,6 +350,7 @@ export function createChannelRuntime(deps: ChannelRuntimeDeps) {
               identityId: accountId,
               peerId,
               text: bodyText,
+              agentId: route.agentId,
               parts: inboundParts,
               raw: ctx,
             });
@@ -358,18 +366,17 @@ export function createChannelRuntime(deps: ChannelRuntimeDeps) {
         async saveMediaBuffer(
           buffer: Buffer,
           contentType: string,
-          context: string,
+          _context: string,
           _maxBytes?: number,
           originalFileName?: string,
         ): Promise<SavedMedia> {
-          // context is "channel:identityId:peerId"
-          const [channelPart = "channel", identityId = "default", peerId = "unknown"] =
-            String(context ?? "").split(":");
-
+          // Temporarily store in the global media root.
+          // bridge.ts handleInbound will relocate the file to the correct peer
+          // workspace directory once boundDirectory is resolved.
           const stored = await mediaStore.saveInboundBuffer({
-            channel: channelPart.trim().toLowerCase() || "channel",
-            identityId: identityId.trim() || "default",
-            peerId: peerId.trim() || "unknown",
+            channel: "inbound",
+            identityId: "default",
+            peerId: "pending",
             kind: mimeToMediaKind(contentType),
             buffer: new Uint8Array(buffer),
             mimeType: contentType,

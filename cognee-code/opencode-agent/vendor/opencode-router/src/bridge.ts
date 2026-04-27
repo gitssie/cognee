@@ -2,17 +2,18 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { Logger } from "pino";
 
 import type { Config, ChannelName, OpenCodeRouterConfigFile, DirectoryStrategy } from "./config.js";
 import { readConfigFile, writeConfigFile, parseDirectoryStrategy } from "./config.js";
 import { BridgeStore } from "./db.js";
+import { provisionPeerDirectory, BUILTIN_TEMPLATE_DIR } from "./directory.js";
 import { classifyDeliveryError } from "./delivery.js";
 import { normalizeEvent } from "./events.js";
 import { startHealthServer, type HealthSnapshot } from "./health.js";
-import { type InboundMessagePart, type MessageDeliveryResult, type OutboundMessagePart, normalizeOutboundParts, summarizeInboundPartsForPrompt, summarizeInboundPartsForReporter, textFromInboundParts } from "./media.js";
+import { type InboundMediaAttachment, type InboundMessagePart, type MessageDeliveryResult, type OutboundMessagePart, normalizeOutboundParts, summarizeInboundPartsForPrompt, summarizeInboundPartsForReporter, textFromInboundParts } from "./media.js";
 import { MediaStore } from "./media-store.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
 import { isWithinWorkspaceRootPath, normalizeScopedDirectoryPath } from "./path-scope.js";
@@ -103,6 +104,7 @@ type InboundMessage = {
   parts?: InboundMessagePart[];
   raw: unknown;
   fromMe?: boolean;
+  agentId?: string;
 };
 
 type SendTargetDelivery = {
@@ -228,69 +230,8 @@ function normalizeIdentityId(value: string | undefined): string {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Directory provisioning (per-peer strategy)
+// Directory provisioning (per-peer strategy) — see directory.ts
 // ──────────────────────────────────────────────────────────────────────────────
-
-// Built-in workspace template bundled with opencode-router.
-const BUILTIN_TEMPLATE_DIR = new URL("../shims/openclaw/workspace-template", import.meta.url).pathname;
-
-/**
- * Given a parsed DirectoryStrategy, a peerId, and the router dataDir (used as
- * the default root for bare "per-peer"), return the resolved absolute directory.
- *
- * For mode="per-peer":
- *  - Creates <root>/<safePeerId>/ on first call.
- *  - Copies built-in template files (non-recursively) unless they already exist.
- *
- * Works for any channel — the caller is responsible for resolving the strategy
- * from whatever identity or global config is appropriate.
- */
-async function provisionPeerDirectory(
-  strategy: DirectoryStrategy,
-  peerId: string,
-  dataDir: string,
-  logger: Logger,
-): Promise<string> {
-  if (strategy.mode === "static") {
-    return strategy.path;
-  }
-
-  const routerRoot = resolve(dataDir, "..");
-  const root = strategy.root
-    ? resolve(isAbsolute(strategy.root) ? strategy.root : join(routerRoot, strategy.root))
-    : join(routerRoot, "workspaces");
-  // Sanitize peerId to a safe directory component
-  const safePeer = peerId.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "default";
-  const peerDir = join(root, safePeer);
-
-  try {
-    await mkdir(peerDir, { recursive: true });
-  } catch (err) {
-    logger.warn({ err, peerDir }, "directory-policy: failed to create peer directory");
-    return peerDir;
-  }
-
-  // Copy built-in template files — skip files that already exist
-  try {
-    const entries = await readdir(BUILTIN_TEMPLATE_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const src = join(BUILTIN_TEMPLATE_DIR, entry.name);
-      const dst = join(peerDir, entry.name);
-      try {
-        await stat(dst);
-        // Already exists — preserve user modifications
-      } catch {
-        await copyFile(src, dst);
-        logger.debug({ dst }, "directory-policy: seeded template file");
-      }
-    }
-  } catch (err) {
-    logger.warn({ err, template: BUILTIN_TEMPLATE_DIR }, "directory-policy: failed to seed template files");
-  }
-
-  return peerDir;
-}
 
 export async function startBridge(config: Config, logger: Logger, reporter?: BridgeReporter, deps: BridgeDeps = {}) {
   const reportStatus = reporter?.onStatus;
@@ -309,7 +250,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           : join(routerRoot, "workspaces"))
         : defaultDirectory || process.cwd(),
   );
-  const mediaStore = new MediaStore(join(workspaceRoot, ".opencode-router", "media"));
+  const globalMediaRoot = join(workspaceRoot, ".opencode-router", "media");
+  const mediaStore = new MediaStore(globalMediaRoot);
   await mediaStore.ensureReady();
 
   const pluginInboundHandler = async (message: InboundMessage) => {
@@ -818,7 +760,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           groupsEnabled = enabled;
           // Also update config so adapters see the change
           (config as any).groupsEnabled = enabled;
-          
+
           // Persist to config file
           const { config: current } = readConfigFile(config.configPath);
           const next: OpenCodeRouterConfigFile = {
@@ -828,7 +770,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           next.version = next.version ?? 1;
           writeConfigFile(config.configPath, next);
           config.configFile = next;
-          
+
           logger.info({ groupsEnabled: enabled }, "groups config updated");
           return { groupsEnabled: enabled };
         },
@@ -1940,6 +1882,32 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     }
     const boundDirectory = scopedBound.directory;
 
+    // Relocate any inbound media files that were temporarily stored in the
+    // global media root to the peer's workspace-local media directory.
+    // This is necessary because saveMediaBuffer (called by channel plugins)
+    // does not yet know the boundDirectory at storage time.
+    if (inbound.parts && inbound.parts.length > 0) {
+      const peerMediaRoot = join(boundDirectory, ".opencode-router", "media");
+      const mediaParts = inbound.parts
+        .filter((p) => p.type === "media")
+        .map((p) => p.media as { filePath?: string });
+      const filePaths = mediaParts.map((m) => m.filePath?.trim() ?? "").filter(Boolean);
+      if (filePaths.length > 0) {
+        try {
+          const moved = await mediaStore.relocateInboundFiles(filePaths, peerMediaRoot);
+          for (const m of mediaParts) {
+            const src = m.filePath?.trim();
+            if (src && moved.has(src)) {
+              m.filePath = moved.get(src);
+              logger.debug({ src, dst: m.filePath }, "media: relocated inbound file to peer workspace");
+            }
+          }
+        } catch (err) {
+          logger.warn({ err }, "media: failed to relocate inbound files");
+        }
+      }
+    }
+
     const shouldAutoBind = !(
       inbound.channel === "telegram" && resolveTelegramIdentityAccess(inbound.identityId).access === "private"
     );
@@ -1988,6 +1956,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       startTyping(runState);
       try {
         const effectiveModel = getUserModel(inbound.channel, inbound.identityId, peerKey, config.model);
+        const effectiveAgent = inbound.agentId?.trim() || undefined;
         const attachmentSummary = summarizeInboundPartsForPrompt(inbound.parts);
         const incomingText = inbound.text || "(no text; user sent media)";
         const promptText = [
@@ -1998,6 +1967,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           {
             sessionID,
             length: inbound.text.length,
+            agent: effectiveAgent,
             model: effectiveModel,
           },
           "prompt start",
@@ -2031,6 +2001,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           const response = await getClient(boundDirectory).session.prompt({
             sessionID,
             parts: [{ type: "text", text: promptText }],
+            ...(effectiveAgent ? { agent: effectiveAgent } : {}),
             ...(effectiveModel ? { model: effectiveModel } : {}),
           });
           return (response as { parts?: PromptPart[] }).parts ?? [];
@@ -2076,7 +2047,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           status: (error as any)?.status ?? (error as any)?.statusCode ?? undefined,
         };
         logger.error({ error: errorDetails, sessionID }, "prompt failed");
-        
+
         // Extract meaningful error details
         let errorMessage = "Error: failed to reach OpenCode.";
         if (error instanceof Error) {
@@ -2101,7 +2072,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             errorMessage = `Error: ${msg.slice(0, 150)}`;
           }
         }
-        
+
         await sendText(inbound.channel, inbound.identityId, inbound.peerId, errorMessage, {
           kind: "system",
         });
