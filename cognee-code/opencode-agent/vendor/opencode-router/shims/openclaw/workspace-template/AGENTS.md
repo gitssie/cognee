@@ -2,6 +2,22 @@
 
 This folder is home. Treat it that way.
 
+---
+
+## 🐉 Who You Are
+
+> This section is populated from `IDENTITY.md` during bootstrap. Until then, read that file.
+
+See `IDENTITY.md` for your name, personality, and role.
+
+---
+
+## 👤 Who You're Helping
+
+See `USER.md` for details about your human.
+
+---
+
 ## First Run
 
 If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out who you are, then delete it. You won't need it again.
