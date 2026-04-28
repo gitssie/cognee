@@ -10,6 +10,16 @@ cognee-frontend
 
 examples/python/.dlt
 .venv
+.git
+**/.venv
+**/node_modules
+**/.tmp
+**/.opencode-router
+**/.pytest_cache
+**/.ruff_cache
+cognee-code/frontend
+cognee-code/opencode-agent
+cognee-code/server/cognee
 .github
 
 .idea

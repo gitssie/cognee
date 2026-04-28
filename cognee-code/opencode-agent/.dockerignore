@@ -1,0 +1,7 @@
+.env
+.env.*
+node_modules
+.tmp
+.opencode-router
+.pytest_cache
+*.log

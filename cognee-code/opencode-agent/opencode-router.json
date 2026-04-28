@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "router": {
+    "rootDir": ".opencode-router",
+    "workspaceDir": "workspaces",
+    "dataDir": "data",
+    "logDir": "logs",
+    "healthHost": "0.0.0.0"
+  },
+  "groupsEnabled": false,
+  "plugin": [
+    "@wecom/wecom-openclaw-plugin"
+  ],
+  "opencode": {
+    "hostname": "0.0.0.0",
+    "port": 4096,
+    "timeout": 30000,
+    "mcp": {
+      "cognee": {
+        "url": "http://localhost:8000/mcp/",
+        "enabled": true
+      }
+    },
+    "cogneeApi": {
+      "baseUrl": "http://localhost:8000",
+      "cookieName": "auth_token"
+    },
+    "plugin": [
+      "./src/plugin/index.ts"
+    ],
+    "agent": {
+      "name": "cognee-coder",
+      "description": "AI coding assistant with persistent memory backed by the cognee knowledge graph",
+      "model": "deepseek/deepseek-v4-flash",
+      "steps": 50,
+      "temperature": 0.1,
+      "prompt": [
+        "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.",
+        "",
+        "## Knowledge Base Search",
+        "Use the `search` MCP tool to query the knowledge base when you need information",
+        "about the project, coding conventions, or past decisions.",
+        "- search_type: Use GRAPH_COMPLETION for natural language Q&A",
+        "- datasets: Restrict to specific dataset names when provided",
+        "",
+        "## Dataset Constraints",
+        "If the user message contains a '<system-reminder>' block listing available datasets,",
+        "you MUST restrict your `search` MCP tool calls to only those datasets.",
+        "Pass the dataset names as the `datasets` parameter when calling `search`."
+      ],
+      "permission": {
+        "bash": "allow",
+        "edit": "allow",
+        "webfetch": "allow",
+        "question": "allow"
+      }
+    }
+  },
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "accounts": [
+        {
+          "id": "default",
+          "enabled": true,
+          "directory": "per-peer://workspaces",
+          "opencode": {
+            "agent": "cognee-coder"
+          },
+          "botId": "REPLACE_ME_BOT_ID",
+          "secret": "REPLACE_ME_SECRET",
+          "token": "REPLACE_ME_TOKEN",
+          "encodingAESKey": "REPLACE_ME_ENCODING_AES_KEY",
+          "receiveId": "REPLACE_ME_RECEIVE_ID"
+        }
+      ]
+    }
+  },
+  "healthPort": 3005
+}

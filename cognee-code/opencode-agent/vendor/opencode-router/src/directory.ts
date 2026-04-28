@@ -6,12 +6,26 @@
  */
 
 import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { DirectoryStrategy } from "./config.js";
 
 // Built-in workspace template bundled with opencode-router.
-export const BUILTIN_TEMPLATE_DIR = new URL("../shims/openclaw/workspace-template", import.meta.url).pathname;
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const DIST_TEMPLATE_DIR = resolve(MODULE_DIR, "../shims/openclaw/workspace-template");
+const SOURCE_TEMPLATE_DIR = resolve(MODULE_DIR, "../../../../vendor/opencode-router/shims/openclaw/workspace-template");
+
+async function resolveBuiltinTemplateDir(): Promise<string> {
+  try {
+    await stat(DIST_TEMPLATE_DIR);
+    return DIST_TEMPLATE_DIR;
+  } catch {
+    return SOURCE_TEMPLATE_DIR;
+  }
+}
+
+export const BUILTIN_TEMPLATE_DIR = SOURCE_TEMPLATE_DIR;
 
 /**
  * Given a parsed DirectoryStrategy, a peerId, and the router dataDir (used as
@@ -51,10 +65,11 @@ export async function provisionPeerDirectory(
 
   // Copy built-in template files — skip files that already exist
   try {
-    const entries = await readdir(BUILTIN_TEMPLATE_DIR, { withFileTypes: true });
+    const templateDir = await resolveBuiltinTemplateDir();
+    const entries = await readdir(templateDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      const src = join(BUILTIN_TEMPLATE_DIR, entry.name);
+      const src = join(templateDir, entry.name);
       const dst = join(peerDir, entry.name);
       try {
         await stat(dst);

@@ -71,6 +71,7 @@ export type BridgePluginContext = {
     identityId: string;
     peerId: string;
     text: string;
+    agentId?: string;
     parts?: any[];
     raw: unknown;
     fromMe?: boolean;

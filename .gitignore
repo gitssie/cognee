@@ -197,6 +197,9 @@ cognee/cache/
 
 node_modules/
 
+# TypeScript build artifacts accidentally emitted beside opencode-router sources
+cognee-code/opencode-agent/vendor/opencode-router/src/**/*.js
+
 # Evals
 SWE-bench_testsample/
 

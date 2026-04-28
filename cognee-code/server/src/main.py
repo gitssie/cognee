@@ -1,47 +1,14 @@
-import asyncio
 import os
-import subprocess
-import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cognee.modules.engine.operations.setup import setup
 
-# ── opencode-agent path ───────────────────────────────────────────────────────
-# server/ is at cognee-code/server/  →  opencode-agent/ is at cognee-code/opencode-agent/
-_AGENT_DIR = Path(__file__).resolve().parents[2] / "opencode-agent"
-
-_agent_proc: subprocess.Popen | None = None
-
-
-def _start_opencode_agent() -> subprocess.Popen | None:
-    """Spawn the opencode-agent bun process as a background child."""
-    if not _AGENT_DIR.exists():
-        print(f"[server] opencode-agent directory not found: {_AGENT_DIR}", file=sys.stderr)
-        return None
-
-    bun_cmd = "bun"
-    try:
-        proc = subprocess.Popen(
-            [bun_cmd, "run", "src/index.ts"],
-            cwd=str(_AGENT_DIR),
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-        )
-        print(f"[server] opencode-agent started (pid={proc.pid})", flush=True)
-        return proc
-    except FileNotFoundError:
-        print("[server] 'bun' not found — skipping opencode-agent startup", file=sys.stderr)
-        return None
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _agent_proc
-
     # Cognee-Code uses Cognee as an embedded engine; do not block requests on
     # startup/runtime LLM or embedding probe calls.
     os.environ.setdefault("COGNEE_SKIP_CONNECTION_TEST", "true")
@@ -98,26 +65,11 @@ async def lifespan(app: FastAPI):
 
     _pem.push_to_queue = _patched_push_to_queue
 
-    # Startup: Launch opencode-agent
-    _agent_proc = _start_opencode_agent()
-
     # Startup: Run MCP session manager for its lifetime
     from src.modules.mcp.server import mcp_lifespan
 
     async with mcp_lifespan():
         yield
-
-    # Shutdown: terminate opencode-agent
-    if _agent_proc is not None and _agent_proc.poll() is None:
-        print("[server] Terminating opencode-agent...", flush=True)
-        _agent_proc.terminate()
-        try:
-            await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, _agent_proc.wait),
-                timeout=5.0,
-            )
-        except asyncio.TimeoutError:
-            _agent_proc.kill()
 
 
 app = FastAPI(

@@ -6,7 +6,10 @@
     "type": "module",
     "scripts": {
         "dev": "bun run --hot src/index.ts",
-        "start": "bun run src/index.ts",
+        "build": "tsc -p tsconfig.json",
+        "start": "bun run dist/index.js",
+        "agentos:test": "node --import tsx src/agent-os-test/index.ts",
+        "sandbox:test": "node --import tsx src/sandbox-agent-test/index.ts",
         "typecheck": "tsc --noEmit",
         "router:dev": "bun run vendor/opencode-router/src/cli.ts",
         "router:typecheck": "tsc -p vendor/opencode-router/tsconfig.json --noEmit"
@@ -14,16 +17,23 @@
     "dependencies": {
         "@opencode-ai/plugin": "^1.2.10",
         "@opencode-ai/sdk": "latest",
+        "@slack/socket-mode": "^2.0.6",
+        "@slack/web-api": "^7.15.1",
         "commander": "^12.1.0",
         "dotenv": "^16.4.7",
         "grammy": "^1.39.3",
         "openclaw": "file:./vendor/opencode-router/shims/openclaw",
         "pino": "^9.6.0",
+        "sandbox-agent": "^0.4.2",
         "zod": "^4.3.6"
     },
     "devDependencies": {
         "@types/bun": "latest",
         "@types/node": "^22.10.2",
+        "tsx": "^4.20.6",
         "typescript": "^5.0.0"
-    }
+    },
+    "trustedDependencies": [
+        "@sandbox-agent/cli-linux-x64"
+    ]
 }

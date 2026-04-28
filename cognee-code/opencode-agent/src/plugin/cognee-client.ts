@@ -1,12 +1,14 @@
-const COGNEE_BASE_URL = process.env.COGNEE_API_URL ?? "http://localhost:8000"
-const COGNEE_EMAIL = process.env.COGNEE_API_EMAIL ?? "default_user@example.com"
-const COGNEE_PASSWORD = process.env.COGNEE_API_PASSWORD ?? "default_password"
-const COOKIE_NAME = process.env.AUTH_TOKEN_COOKIE_NAME ?? "auth_token"
+const COGNEE_BASE_URL = process.env.COGNEE_API_URL
+const COGNEE_EMAIL = process.env.COGNEE_API_EMAIL
+const COGNEE_PASSWORD = process.env.COGNEE_API_PASSWORD
+const COOKIE_NAME = process.env.AUTH_TOKEN_COOKIE_NAME
 
 // Cached auth cookie — no TTL, re-acquired only on 401
 let _cachedCookie: string | null = null
 
 async function login(): Promise<string | null> {
+  if (!COGNEE_BASE_URL || !COGNEE_EMAIL || !COGNEE_PASSWORD || !COOKIE_NAME) return null
+
   try {
     const resp = await fetch(`${COGNEE_BASE_URL}/api/v1/auth/login`, {
       method: "POST",
@@ -70,6 +72,8 @@ export interface RuleItem {
 
 /** Get coding rules for a specific project */
 export async function getRulesByProjectId(projectId: string): Promise<RuleItem[]> {
+  if (!COGNEE_BASE_URL) return []
+
   const url = `${COGNEE_BASE_URL}/api/v1/rules?project_id=${projectId}`
   const resp = await apiFetch(url)
   if (!resp.ok) return []
@@ -81,6 +85,8 @@ export async function getRulesByProjectId(projectId: string): Promise<RuleItem[]
  * Calls POST /api/v1/rules/save — no LLM involved, pure persistence.
  */
 export async function saveRules(rules: string[], projectId: string): Promise<void> {
+  if (!COGNEE_BASE_URL) return
+
   const url = `${COGNEE_BASE_URL}/api/v1/rules/save`
   await apiFetch(url, {
     method: "POST",
@@ -144,6 +150,8 @@ Do NOT include:
  * Only sends ## Discoveries and ## Instructions sections — filters out transient progress info.
  */
 export async function learnFromSummary(summaryText: string, projectId: string): Promise<void> {
+  if (!COGNEE_BASE_URL) return
+
   const knowledgeText = extractKnowledgeSections(summaryText)
   if (!knowledgeText) return
 
@@ -164,10 +172,11 @@ export async function learnFromSummary(summaryText: string, projectId: string): 
  * so it's stable across branches and worktrees of the same repository.
  */
 export async function resolveProject(opencodeProjectId: string): Promise<ProjectItem | null> {
+  if (!COGNEE_BASE_URL) return null
+
   const url = `${COGNEE_BASE_URL}/api/v1/projects?opencode_project_id=${encodeURIComponent(opencodeProjectId)}`
   const resp = await apiFetch(url)
   if (!resp.ok) return null
   const projects: ProjectItem[] = await resp.json()
   return projects[0] ?? null
 }
-
