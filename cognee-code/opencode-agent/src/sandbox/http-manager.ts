@@ -18,13 +18,14 @@
 import { randomUUID } from "node:crypto";
 import { McpSandboxClient } from "./mcp-client";
 import { PortAllocator } from "./port-allocator";
-import { buildSandboxName, initFilesystem, OPENCODE_XDG_ENV } from "./workspace";
+import { buildSandboxName, initFilesystem } from "./workspace";
 import {
   createOpencodeServerClient,
   OPENCODE_GUEST_PORT,
   hasActiveSessions,
   waitForOpenCodeReady,
 } from "./opencode-client";
+import { buildSandboxEnvironment } from "./env";
 import type {
   OpenCodeSandboxManager,
   SandboxConnection,
@@ -252,19 +253,7 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
       secrets: this.cfg.secrets,
     });
 
-    const env: Record<string, string> = {
-      ...OPENCODE_XDG_ENV,
-      OPENCODE_SERVER_USERNAME: "opencode",
-      OPENCODE_SERVER_PASSWORD: password,
-      OPENCODE_DISABLE_AUTOUPDATE: "true",
-      OPENCODE_DISABLE_MODELS_FETCH: "true",
-      OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
-      OPENCODE_ENABLE_QUESTION_TOOL: "false",
-      TZ: "Asia/Shanghai",
-    };
-    for (const s of this.cfg.secrets) {
-      if (s.value) env[s.envName] = s.value;
-    }
+    const env = buildSandboxEnvironment(password, this.cfg.secrets);
 
     // Call MCP to create the sandbox VM.
     // Start OpenCode as the entrypoint so it runs as the main process.

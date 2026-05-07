@@ -13,7 +13,6 @@ import { PortAllocator } from "./port-allocator";
 import {
     buildSandboxName,
     initFilesystem,
-    OPENCODE_XDG_ENV,
 } from "./workspace";
 import {
     createOpencodeServerClient,
@@ -21,6 +20,7 @@ import {
     hasActiveSessions,
     waitForOpenCodeReady,
 } from "./opencode-client";
+import { buildSandboxEnvironment } from "./env";
 
 // ═══════════════════════════════════════════════════════════
 // Constants
@@ -65,16 +65,11 @@ function newBuilder(
         }
     }
 
-    for (const [k, v] of Object.entries(OPENCODE_XDG_ENV)) b.env(k, v);
+    for (const [key, value] of Object.entries(buildSandboxEnvironment(password, []))) {
+        b.env(key, value);
+    }
     b.env("OPENCODE_HOSTNAME", "0.0.0.0");
     b.env("OPENCODE_PORT", String(OPENCODE_GUEST_PORT));
-    b.env("OPENCODE_SERVER_USERNAME", "opencode");
-    b.env("OPENCODE_SERVER_PASSWORD", password);
-    b.env("OPENCODE_DISABLE_AUTOUPDATE", "true");
-    b.env("OPENCODE_DISABLE_MODELS_FETCH", "true");
-    b.env("OPENCODE_DISABLE_EXTERNAL_SKILLS", "true");
-    b.env("OPENCODE_ENABLE_QUESTION_TOOL", "false");
-    b.env("TZ", "Asia/Shanghai");
 
     return b;
 }

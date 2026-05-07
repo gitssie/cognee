@@ -18,6 +18,7 @@ import { SandboxManager } from "../../../src/sandbox/manager.js";
 import { createSandboxClientProvider } from "../../../src/sandbox/sandbox-provider.js";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { OPENCODE_GUEST_PORT } from "../../../src/sandbox/opencode-client.js";
+import { buildSandboxEnvironment, SANDBOX_TIMEZONE } from "../../../src/sandbox/env.js";
 
 let testDir: string;
 let sandboxDir: string;
@@ -158,6 +159,14 @@ describe("Config / DB path resolution", () => {
   it("fallback DB path matches router path", () => {
     const routerDbPath = resolve(testDir, "data", "opencode-router.db");
     expect(routerDbPath).toBe(resolve(testDir, "data", "opencode-router.db"));
+  });
+});
+
+describe("Sandbox environment", () => {
+  it("enables EXA and sets timezone for sandbox processes", () => {
+    const env = buildSandboxEnvironment("secret-password", []);
+    expect(env.OPENCODE_ENABLE_EXA).toBe("true");
+    expect(env.TZ).toBe(SANDBOX_TIMEZONE);
   });
 });
 
