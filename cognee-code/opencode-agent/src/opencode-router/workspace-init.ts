@@ -28,17 +28,23 @@ export const WorkspaceInitLive = Layer.effectDiscard(
         yield* Ref.set(initialized, new Set(seen).add(identity));
 
         mkdirSync(workspaceHostPath, { recursive: true });
-        seedIfMissing(`${workspaceHostPath}/AGENTS.md`, agentsMd);
-        seedIfMissing(`${workspaceHostPath}/TOOLS.md`, toolsMd);
-        seedIfMissing(`${workspaceHostPath}/MEMORY.md`, memoryMd);
+        const seeded = [
+          seedIfMissing(`${workspaceHostPath}/AGENTS.md`, agentsMd),
+          seedIfMissing(`${workspaceHostPath}/TOOLS.md`, toolsMd),
+          seedIfMissing(`${workspaceHostPath}/MEMORY.md`, memoryMd),
+        ].filter(Boolean);
 
-        console.log(`[workspace-init] Seeded ${workspaceHostPath} (${identity})`);
+        console.log(
+          `[workspace-init] Initialized ${workspaceHostPath} (${identity}); ` +
+          `created=${seeded.join(",") || "none"}`,
+        );
       }),
     );
   }),
 );
 
-function seedIfMissing(path: string, content: string): void {
-  if (existsSync(path)) return;
+function seedIfMissing(path: string, content: string): string | null {
+  if (existsSync(path)) return null;
   writeFileSync(path, content);
+  return path.split("/").pop() ?? path;
 }
