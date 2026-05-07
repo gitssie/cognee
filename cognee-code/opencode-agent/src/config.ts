@@ -1,13 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type { Config, ServerOptions } from "@opencode-ai/sdk/v2";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const IS_COMPILED_RUNTIME = __dirname.includes("/dist/");
-const PROJECT_ROOT = IS_COMPILED_RUNTIME ? resolve(__dirname, "../..") : resolve(__dirname, "..");
+const PROJECT_ROOT = resolve(__dirname, "..");
 
 const DEFAULT_OPENCODE_HOSTNAME = "127.0.0.1";
 const DEFAULT_OPENCODE_PORT = 4096;
@@ -25,6 +24,30 @@ export interface RouterRuntimePaths {
     dataDir: string;
     logDir: string;
     configPath: string;
+}
+
+export interface SandboxConfig {
+    /** Host root for per-user sandbox directories.
+     *  Each identity gets `<sandboxRoot>/<identity>/` with `workspace/` and `data/` subdirs. */
+    sandboxRoot: string;
+    /** Start of allocated localhost port range. */
+    portStart: number;
+    /** End of allocated localhost port range. */
+    portEnd: number;
+    /** Idle TTL in ms before stopping a sandbox. */
+    idleTtlMs: number;
+    /** Max sandbox runtime in ms before forced drain. */
+    maxRuntimeMs: number;
+    /** Graceful stop timeout in ms. */
+    stopTimeoutMs: number;
+    /** OpenCode OCI image. */
+    opencodeImage: string;
+    /** Per-sandbox CPU count. */
+    cpus: number;
+    /** Per-sandbox memory in MB. */
+    memoryMb: number;
+    /** Cleanup check interval in ms. */
+    cleanupIntervalMs: number;
 }
 
 interface RouterConfigFile {
@@ -102,32 +125,13 @@ function applyConfiguredEnvironment(config: RouterConfigFile): void {
     setEnvDefault("AUTH_TOKEN_COOKIE_NAME", cogneeApi?.cookieName);
 }
 
-function resolveProjectPath(value: string): string {
-    return isAbsolute(value) ? value : resolve(PROJECT_ROOT, value);
-}
-
-function buildPluginUrl(pluginPath: string): string {
-    if (pluginPath.startsWith("file://")) {
-        return pluginPath;
-    }
-
-    const runtimePluginPath =
-        IS_COMPILED_RUNTIME && pluginPath.startsWith("./src/") && pluginPath.endsWith(".ts")
-            ? pluginPath.replace("./src/", "./dist/src/").replace(/\.ts$/, ".js")
-            : pluginPath;
-
-    return `file://${resolveProjectPath(runtimePluginPath)}`;
-}
-
 export function buildOpencodeConfig(): Config {
     const projectConfig = readProjectConfig();
     applyConfiguredEnvironment(projectConfig);
     const cogneeMcp = projectConfig.opencode?.mcp?.cognee;
     const agentConfig = projectConfig.opencode?.agent;
     const agentName = getConfiguredAgentName(projectConfig);
-    const opencodePlugins = projectConfig.opencode?.plugin?.length
-        ? projectConfig.opencode.plugin.map(buildPluginUrl)
-        : [];
+    const opencodePlugins = projectConfig.opencode?.plugin ?? [];
     const mcpHeaders: Record<string, string> = {};
     const cogneeApiToken = process.env.COGNEE_API_TOKEN?.trim();
 
@@ -254,6 +258,63 @@ export function ensureRouterRuntimeConfig(
         "utf8",
     );
     return next;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Sandbox configuration (microsandbox per-user OpenCode sandboxes)
+// ────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_SANDBOX_PORT_START = 42000;
+const DEFAULT_SANDBOX_PORT_END = 45999;
+const DEFAULT_SANDBOX_IDLE_TTL_MS = 3_600_000;      // 1 hour
+const DEFAULT_SANDBOX_MAX_RUNTIME_MS = 21_600_000;   // 6 hours
+const DEFAULT_SANDBOX_STOP_TIMEOUT_MS = 30_000;       // 30 seconds
+const DEFAULT_SANDBOX_CPU_COUNT = 1;
+const DEFAULT_SANDBOX_MEMORY_MB = 1024;
+const DEFAULT_SANDBOX_CLEANUP_INTERVAL_MS = 60_000;   // 1 minute
+const DEFAULT_OPENCODE_IMAGE = "ghcr.io/anomalyco/opencode:latest";
+
+export function buildSandboxConfig(paths: RouterRuntimePaths): SandboxConfig {
+    return {
+        sandboxRoot:
+            process.env.OPENCODE_SANDBOX_ROOT?.trim() ||
+            resolve(paths.rootDir, "sandboxes"),
+        portStart: parseInteger(
+            process.env.OPENCODE_SANDBOX_PORT_START,
+            DEFAULT_SANDBOX_PORT_START,
+        ),
+        portEnd: parseInteger(
+            process.env.OPENCODE_SANDBOX_PORT_END,
+            DEFAULT_SANDBOX_PORT_END,
+        ),
+        idleTtlMs: parseInteger(
+            process.env.OPENCODE_SANDBOX_IDLE_TTL_MS,
+            DEFAULT_SANDBOX_IDLE_TTL_MS,
+        ),
+        maxRuntimeMs: parseInteger(
+            process.env.OPENCODE_SANDBOX_MAX_RUNTIME_MS,
+            DEFAULT_SANDBOX_MAX_RUNTIME_MS,
+        ),
+        stopTimeoutMs: parseInteger(
+            process.env.OPENCODE_SANDBOX_STOP_TIMEOUT_MS,
+            DEFAULT_SANDBOX_STOP_TIMEOUT_MS,
+        ),
+        opencodeImage:
+            process.env.OPENCODE_SANDBOX_IMAGE?.trim() ||
+            DEFAULT_OPENCODE_IMAGE,
+        cpus: parseInteger(
+            process.env.OPENCODE_SANDBOX_CPUS,
+            DEFAULT_SANDBOX_CPU_COUNT,
+        ),
+        memoryMb: parseInteger(
+            process.env.OPENCODE_SANDBOX_MEMORY_MB,
+            DEFAULT_SANDBOX_MEMORY_MB,
+        ),
+        cleanupIntervalMs: parseInteger(
+            process.env.OPENCODE_SANDBOX_CLEANUP_INTERVAL_MS,
+            DEFAULT_SANDBOX_CLEANUP_INTERVAL_MS,
+        ),
+    };
 }
 
 export function buildRouterEnv(

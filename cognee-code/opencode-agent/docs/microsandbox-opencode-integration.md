@@ -208,115 +208,124 @@ The host server should own sandbox lifecycle. OpenCode should not spawn sandboxe
 
 ## Deployment topology when using microsandbox
 
-Important: `msb` is a host runtime, not something that magically exists inside `ghcr.io/anomalyco/opencode:latest` or the current `opencode-agent` Docker image.
+Important: `msb` is a host runtime. It works wherever the process that imports `microsandbox` is actually running on a Linux host with KVM and has access to `/dev/kvm` plus the required host paths.
 
-If `opencode-agent` continues to run as a normal Docker container, it should not directly spawn microsandbox VMs unless that container is explicitly prepared with `msb`, `/dev/kvm`, and elevated privileges. The safer production design is to split orchestration from the containerized app.
+The previous version of this document was too restrictive. We do need to support a mode where `opencode-agent` itself runs on the host machine and directly uses microsandbox. That is a valid and likely simplest deployment for the first milestone.
 
-### Recommended topology: host-side Sandbox Supervisor
+The implementation in this repo belongs in:
+
+```text
+cognee-code/sandbox-supervisor
+```
+
+But that package should be treated as the reusable microsandbox integration layer imported directly by `opencode-agent`.
+
+Runtime rule:
+
+```text
+opencode-agent runs on the host
+opencode-agent imports microsandbox manager in-process
+opencode-agent directly uses host msb + /dev/kvm
+```
+
+Any process that imports `microsandbox` should fail fast if it does not have `/dev/kvm` access.
+
+### Supported topology: host-run opencode-agent with in-process manager
 
 ```text
 Linux host with KVM
-  ├─ opencode-agent container
-  │   └─ calls Sandbox Supervisor over localhost/private network
-  ├─ Sandbox Supervisor process (host-native Node/TS service)
-  │   ├─ has microsandbox SDK / msb installed
+  ├─ opencode-agent process (host-native Node/TS service)
+  │   ├─ imports sandbox-supervisor manager/module
   │   ├─ owns Sandbox.builder(...).createDetached()
-  │   ├─ allocates ports and mounts host workspace paths
-  │   └─ watches activity + stops/restarts sandboxes
+  │   ├─ allocates ports and resolves host workspace paths
+  │   └─ proxies requests to per-user OpenCode sandboxes
   └─ microsandbox microVMs
       ├─ opencode for user A/project X
       └─ opencode for user B/project Y
 ```
 
-Responsibilities:
+Responsibilities in this mode:
 
 | Component | Responsibility |
 | --- | --- |
-| `opencode-agent` container | Business API, auth, routing, calling supervisor, proxying to per-user OpenCode |
-| Sandbox Supervisor | All `msb`/microsandbox lifecycle operations |
+| `opencode-agent` host process | Business API, auth, routing, sandbox lifecycle, OpenCode proxy |
+| `cognee-code/sandbox-supervisor` package | Reusable manager code imported by `opencode-agent` |
 | OpenCode sandbox | Official `ghcr.io/anomalyco/opencode:latest` runtime per user/project |
 
-Why this is preferred:
+Why this mode matters:
 
-- No privileged `opencode-agent` container.
-- `msb` can use host KVM directly.
-- Host workspace paths are resolved and mounted by the host process that can actually see them.
-- Failure boundary is cleaner: if `opencode-agent` restarts, sandboxes can keep running detached.
+- `opencode-agent` can use host-installed `msb` directly.
+- No extra supervisor hop is required.
+- Host workspace path resolution is straightforward.
+- This is the simplest path when `opencode-agent` is already deployed on the host.
 
-Supervisor minimal API:
-
-```text
-POST /runtimes/ensure      { userId, projectId, workspaceKey } -> { baseUrl, auth, sandboxName }
-POST /runtimes/touch       { userId, projectId }
-POST /runtimes/stop        { userId, projectId, reason }
-DELETE /runtimes           { userId, projectId }
-GET /runtimes/:id/status   -> sandbox + opencode status
-GET /runtimes/:id/metrics  -> microsandbox metrics
-```
-
-`opencode-agent` should never run `msb` commands directly in this topology. It only calls the supervisor.
-
-### Development topology: host-run agent
-
-For local development, the simplest path is:
+Implementation path in this repo:
 
 ```text
-run opencode-agent directly on host with Node/Bun
-install msb on host
-use microsandbox SDK directly from opencode-agent
+cognee-code/sandbox-supervisor
+  ├─ src/manager.ts    # reusable microsandbox lifecycle manager
+  └─ package.json      # owns microsandbox dependency
 ```
 
-This is good for iteration, but production should still prefer a supervisor boundary.
+Integration rule:
 
-### Alternative: privileged container with msb installed
+```text
+opencode-agent imports src/manager.ts directly (or package export)
+no external supervisor hop
+```
 
-Microsandbox documentation says Docker deployment requires Linux KVM and running the container with:
+### Why an external supervisor is the wrong design here
+
+Do not keep a separate supervisor compatibility mode in this design. It is worse for this target deployment because:
+
+- it introduces a second lifecycle owner for the same sandbox state
+- it adds an unnecessary local HTTP hop for every ensure/status/stop operation
+- it splits auth and failure handling across two processes instead of one
+- it complicates workspace path ownership and mount resolution
+- it creates state drift risk between `opencode-agent` runtime records and supervisor runtime records
+- it makes local debugging and observability worse because sandbox decisions are no longer made where requests enter the system
+
+For the deployment you asked for, `opencode-agent` is already the host process, so adding a second host process only increases complexity without adding capability.
+
+Run on the host:
 
 ```bash
-docker run --privileged --device /dev/kvm ...
+cd cognee-code/sandbox-supervisor
+npm install
 ```
 
-So it is technically possible to build an `opencode-agent-with-msb` image and run it as privileged:
+Then `opencode-agent` imports and calls the manager directly.
+
+### Development topology: host-run opencode-agent
+
+For local development, the simplest path is often:
 
 ```text
-opencode-agent container
-  ├─ includes msb / microsandbox SDK native dependencies
-  ├─ has /dev/kvm mounted
-  ├─ runs with --privileged or equivalent capabilities
-  └─ creates microVMs from inside the container
+run opencode-agent directly on host with Node
+install msb/microsandbox prerequisites on host
+import sandbox-supervisor manager in-process
+opencode-agent manages sandboxes directly
 ```
 
-This is not the recommended default because it expands the privilege of the main application container and complicates host path mounts. Use only if deployment constraints require everything containerized.
+This is the mode explicitly required by this design update.
 
-### Alternative: microsandbox sidecar container
-
-Microsandbox publishes a container image, but it is still a CLI/runtime container, not a complete long-running orchestration API for our app. To use it cleanly, wrap it with the same Sandbox Supervisor API:
+### Startup sequence
 
 ```text
-opencode-agent container -> sandbox-supervisor container -> microsandbox runtime -> OpenCode microVMs
-```
-
-The supervisor container would still need `/dev/kvm`, persistent `/root/.microsandbox`, and access to the host workspace mount root.
-
-### Startup sequence with supervisor
-
-```text
-1. Host boots Sandbox Supervisor.
-2. Supervisor verifies:
+1. Host boots opencode-agent.
+2. opencode-agent verifies:
    - msb/microsandbox SDK is installed
    - /dev/kvm is available
    - ghcr.io/anomalyco/opencode:latest is pulled or pullable
    - workspace mount root exists
-3. opencode-agent starts normally in Docker.
-4. User request arrives.
-5. opencode-agent calls supervisor /runtimes/ensure.
-6. Supervisor resolves host workspace path and creates/starts sandbox.
-7. Supervisor waits for OpenCode /global/health.
-8. Supervisor returns localhost/private baseUrl + auth metadata.
-9. opencode-agent proxies request to that OpenCode server.
+3. User request arrives.
+4. opencode-agent calls ensureRuntime(userId, projectId).
+5. In-process manager resolves host workspace path and creates/starts sandbox.
+6. Manager waits for OpenCode /global/health.
+7. opencode-agent proxies request to that OpenCode server.
 ```
 
-This answers the key deployment question: Docker starts `opencode-agent`; the host-side supervisor starts the per-user OpenCode sandboxes.
+This answers the deployment question: host-run `opencode-agent` starts the per-user OpenCode sandboxes directly.
 
 ## Runtime identity
 
@@ -974,4 +983,55 @@ Implement first milestone as:
 per user-project sandbox + official OpenCode image + TypeScript SDK manager + localhost proxy
 ```
 
-Do not mix this with the current `opencode-agent` router process yet. Treat microsandbox OpenCode as a new runtime backend and migrate features into it incrementally.
+---
+
+## Implementation Status
+
+### Completed
+
+| Component | File(s) | Status |
+|-----------|---------|--------|
+| Sandbox types & interfaces | `src/sandbox/types.ts` | ✅ Implemented |
+| SQLite runtime persistence | `src/sandbox/db.ts` | ✅ Implemented |
+| Port allocator (42000-45999) | `src/sandbox/port-allocator.ts` | ✅ Implemented |
+| Workspace path resolution | `src/sandbox/workspace.ts` | ✅ Implemented |
+| Sandbox lifecycle manager | `src/sandbox/manager.ts` | ✅ Implemented |
+| Public API exports | `src/sandbox/index.ts` | ✅ Implemented |
+| Sandbox config (env vars) | `src/config.ts` → `buildSandboxConfig()` | ✅ Implemented |
+| Dual-mode entrypoint | `src/index.ts` (classic + sandbox mode) | ✅ Implemented |
+| Router sandbox integration | `src/router.ts`, `vendor/opencode-router/src/bridge.ts` | ✅ Implemented |
+| Package dependencies | `package.json` → `microsandbox` | ✅ Implemented |
+
+### How it works
+
+1. **Enable sandbox mode:** Set `OPENCODE_SANDBOX_ENABLED=true` environment variable.
+2. **On startup:** `src/index.ts` creates a `SandboxManager` with config, starts the cleanup loop, then starts the router in sandbox mode.
+3. **On message:** The bridge's `handleInbound()` resolves the sandbox identity from `channel:identityId:peerId`, calls `sandboxManager.ensureRuntime(identity)`, and uses that sandbox's OpenCode client.
+4. **Cleanup:** The manager runs every 60s, checks `/session/status` on each sandbox, and stops idle ones after 15 min. Max runtime is 6 hours.
+5. **Backward compatible:** Without `OPENCODE_SANDBOX_ENABLED`, the classic single-server mode works unchanged.
+
+### Env vars for sandbox mode
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENCODE_SANDBOX_ENABLED` | `false` | Enable per-user microsandbox isolation |
+| `OPENCODE_SANDBOX_WORKSPACE_ROOT` | `<router>/workspaces` | Host root for per-user workspace dirs |
+| `OPENCODE_SANDBOX_STATE_ROOT` | `<router>/sandbox-state` | Host root for per-user OpenCode state |
+| `OPENCODE_SANDBOX_PORT_START` | `42000` | Start of localhost port range |
+| `OPENCODE_SANDBOX_PORT_END` | `45999` | End of localhost port range |
+| `OPENCODE_SANDBOX_IDLE_TTL_MS` | `900000` | Idle timeout (15 min) |
+| `OPENCODE_SANDBOX_MAX_RUNTIME_MS` | `21600000` | Max runtime (6 hours) |
+| `OPENCODE_SANDBOX_IMAGE` | `ghcr.io/anomalyco/opencode:latest` | OpenCode OCI image |
+| `OPENCODE_SANDBOX_CPUS` | `1` | CPUs per sandbox |
+| `OPENCODE_SANDBOX_MEMORY_MB` | `1024` | Memory per sandbox (MB) |
+| `OPENCODE_SANDBOX_CLEANUP_INTERVAL_MS` | `60000` | Cleanup check interval |
+| `OPENCODE_SANDBOX_DB_PATH` | `<router>/sandbox.db` | Runtime record database path |
+
+### Prerequisites for sandbox mode
+
+- Linux host with KVM (`/dev/kvm`)
+- `microsandbox` npm package installed (`npm install microsandbox`)
+- `opencode` CLI available inside the sandbox image (provided by the default image)
+- Provider API keys set as env vars (auto-injected as secrets)
+
+Support direct integration into the current host-run `opencode-agent` process via the reusable sandbox manager, and make that the only target topology for this design.

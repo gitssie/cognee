@@ -1,0 +1,31 @@
+FROM oven/bun:1.3.13-debian
+
+WORKDIR /app
+
+COPY package.json bun.lock ./
+RUN bun install --production || true
+
+COPY build/index.js ./index.js
+COPY src/opencode-router/shims ./shims
+COPY opencode-router.json ./opencode-router.json
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
+
+VOLUME ["/root/.microsandbox", "/home/opencode-agent", "/opt/glibc-2.41", "/opt/glibc-2.39"]
+
+ENV HOME=/app
+ENV TZ=Asia/Shanghai
+ENV OPENCODE_SANDBOX_ENABLED=true
+ENV OPENCODE_SANDBOX_IMAGE=ghcr.io/anomalyco/opencode:latest
+ENV OPENCODE_ROUTER_CONFIG_PATH=/app/opencode-router.json
+ENV OPENCODE_ROUTER_ROOT_DIR=/home/opencode-agent/.opencode-router
+ENV OPENCODE_ROUTER_HEALTH_HOST=0.0.0.0
+ENV OPENCODE_ADMIN_PROXY_HOST=0.0.0.0
+ENV PATH=/root/.microsandbox/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LD_LIBRARY_PATH=/root/.microsandbox/lib
+
+EXPOSE 3005
+EXPOSE 4096
+EXPOSE 42000-45999
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["bun", "/app/index.js"]

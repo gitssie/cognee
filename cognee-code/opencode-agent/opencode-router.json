@@ -8,6 +8,7 @@
     "healthHost": "0.0.0.0"
   },
   "groupsEnabled": false,
+  "opencodeDirectory": "per-peer://workspaces",
   "plugin": [
     "@wecom/wecom-openclaw-plugin"
   ],
@@ -67,8 +68,8 @@
           "opencode": {
             "agent": "cognee-coder"
           },
-          "botId": "REPLACE_ME_BOT_ID",
-          "secret": "REPLACE_ME_SECRET",
+          "botId": "aibJ5Roq3zkfCviQY83UCBjiCt75HyHq_Na",
+          "secret": "F3IK0lbGeBVJnwWLGMOJkiNouE8uhz917V2N55zSmUZ",
           "token": "REPLACE_ME_TOKEN",
           "encodingAESKey": "REPLACE_ME_ENCODING_AES_KEY",
           "receiveId": "REPLACE_ME_RECEIVE_ID"
