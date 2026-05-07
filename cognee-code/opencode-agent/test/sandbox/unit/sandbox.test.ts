@@ -2,7 +2,7 @@
  * Unit tests for sandbox internals — no microsandbox VM required.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PortAllocator } from "../../../src/sandbox/port-allocator.js";
@@ -98,6 +98,21 @@ describe("Workspace paths", () => {
     runtime.dispose();
 
     expect(existsSync(join(paths.workspaceHostPath, "AGENTS.md"))).toBeTrue();
+    expect(existsSync(join(paths.workspaceHostPath, "TOOLS.md"))).toBeTrue();
+    expect(existsSync(join(paths.workspaceHostPath, "MEMORY.md"))).toBeTrue();
+  });
+
+  it("does not overwrite existing workspace files while seeding", async () => {
+    const root = join(testDir, "sandboxes-existing-files");
+    const paths = initFilesystem("wecom:default:existing-files", { sandboxRoot: root, secrets: [] });
+    const agentsPath = join(paths.workspaceHostPath, "AGENTS.md");
+    writeFileSync(agentsPath, "custom user content\n");
+
+    const runtime = makeRuntime(WorkspaceInitLive as any);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    runtime.dispose();
+
+    expect(readFileSync(agentsPath, "utf8")).toBe("custom user content\n");
     expect(existsSync(join(paths.workspaceHostPath, "TOOLS.md"))).toBeTrue();
     expect(existsSync(join(paths.workspaceHostPath, "MEMORY.md"))).toBeTrue();
   });

@@ -5,7 +5,8 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --production || true
 
-COPY build/index.js ./index.js
+COPY dist ./dist
+COPY src/opencode-router/workspace-template ./dist/src/opencode-router/workspace-template
 COPY src/opencode-router/shims ./shims
 COPY opencode-router.json ./opencode-router.json
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
@@ -28,4 +29,4 @@ EXPOSE 3005
 EXPOSE 4096
 EXPOSE 42000-45999
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["bun", "/app/index.js"]
+CMD ["bun", "/app/dist/src/index.js"]

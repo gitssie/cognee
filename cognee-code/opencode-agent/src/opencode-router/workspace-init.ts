@@ -7,7 +7,7 @@
  */
 
 import { Effect, Layer, Ref } from "effect";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { EventBus, WorkspaceInit } from "../events";
 
 import agentsMd from "./workspace-template/AGENTS.txt";
@@ -28,12 +28,17 @@ export const WorkspaceInitLive = Layer.effectDiscard(
         yield* Ref.set(initialized, new Set(seen).add(identity));
 
         mkdirSync(workspaceHostPath, { recursive: true });
-        writeFileSync(`${workspaceHostPath}/AGENTS.md`, agentsMd);
-        writeFileSync(`${workspaceHostPath}/TOOLS.md`, toolsMd);
-        writeFileSync(`${workspaceHostPath}/MEMORY.md`, memoryMd);
+        seedIfMissing(`${workspaceHostPath}/AGENTS.md`, agentsMd);
+        seedIfMissing(`${workspaceHostPath}/TOOLS.md`, toolsMd);
+        seedIfMissing(`${workspaceHostPath}/MEMORY.md`, memoryMd);
 
         console.log(`[workspace-init] Seeded ${workspaceHostPath} (${identity})`);
       }),
     );
   }),
 );
+
+function seedIfMissing(path: string, content: string): void {
+  if (existsSync(path)) return;
+  writeFileSync(path, content);
+}
