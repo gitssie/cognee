@@ -1,6 +1,6 @@
 import { Effect, Semaphore } from "effect";
 import { NetworkPolicy, Sandbox } from "microsandbox";
-import type { ExecHandle } from "microsandbox";
+import type { ExecEvent, ExecHandle } from "microsandbox";
 import { randomUUID } from "node:crypto";
 import type {
     OpenCodeSandboxManager,
@@ -10,17 +10,15 @@ import type {
 } from "./types";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { PortAllocator } from "./port-allocator";
-import {
-    buildSandboxName,
-    initFilesystem,
-} from "./workspace";
+import { buildSandboxName, initFilesystem } from "./workspace";
+import { basename } from "node:path";
 import {
     createOpencodeServerClient,
     OPENCODE_GUEST_PORT,
-    hasActiveSessions,
     waitForOpenCodeReady,
 } from "./opencode-client";
 import { buildSandboxEnvironment } from "./env";
+import type { Logger } from "pino";
 
 // ═══════════════════════════════════════════════════════════
 // Constants
@@ -51,21 +49,16 @@ function newBuilder(
         .network((n: any) =>
             n
                 .port(hostPort, OPENCODE_GUEST_PORT)
-                .policy(NetworkPolicy.allowAll())
-                .dns((d: any) =>
-                    d.nameservers(["114.114.114.114", "8.8.8.8", "1.1.1.1"]),
-                ),
+                .policy(NetworkPolicy.allowAll()),
         );
 
     for (const s of cfg.secrets) {
-        if (typeof b.secretEnv === "function") {
-            b.secretEnv(s.envName, s.value, s.allowHosts[0]);
-        } else {
-            b.env(s.envName, s.value);
-        }
+        b.env(s.envName, s.value);
     }
 
-    for (const [key, value] of Object.entries(buildSandboxEnvironment(password, []))) {
+    for (const [key, value] of Object.entries(
+        buildSandboxEnvironment(password, []),
+    )) {
         b.env(key, value);
     }
     b.env("OPENCODE_HOSTNAME", "0.0.0.0");
@@ -98,10 +91,18 @@ class SandboxInstance implements SandboxRuntime {
         public identity: string,
         private cfg: SandboxManagerConfig,
         private ports: PortAllocator,
-        private onDispose: (identity: string, instance: SandboxInstance) => void,
+        private logger: Logger | undefined,
+        private onDispose: (
+            identity: string,
+            instance: SandboxInstance,
+        ) => void,
     ) {
         this.sandboxName = buildSandboxName(identity);
         this.image = cfg.opencodeImage;
+    }
+
+    setLogger(logger: Logger | undefined): void {
+        this.logger = logger;
     }
 
     ensure(): Promise<SandboxConnection> {
@@ -116,41 +117,48 @@ class SandboxInstance implements SandboxRuntime {
         return this.runExclusive(this.removeEffect());
     }
 
+    async provisionFiles(sourcePaths: string[]): Promise<Map<string, string>> {
+        return this.runExclusive(this.provisionFilesEffect(sourcePaths));
+    }
+
     private ensureEffect(): Effect.Effect<SandboxConnection, unknown> {
         return Effect.suspend(() => {
-            if (this.status === "running" && this.hostPort !== 0 && this.client) {
-                console.log(`[sandbox-instance:${this.identity}] reuse running port=${this.hostPort}`);
+            if (
+                this.status === "running" &&
+                this.hostPort !== 0 &&
+                this.client
+            ) {
+                this.logger?.info({ port: this.hostPort }, "reuse running sandbox");
                 return Effect.succeed(this.buildConnection());
             }
-            console.log(`[sandbox-instance:${this.identity}] restart status=${this.status} port=${this.hostPort}`);
-            return this.stopEffect(false).pipe(Effect.andThen(() => this.startEffect()));
+            this.logger?.info(
+                { status: this.status, port: this.hostPort },
+                "restart sandbox",
+            );
+            return this.stopEffect(false).pipe(
+                Effect.andThen(() => this.startEffect()),
+            );
         });
     }
 
     private stopEffect(dispose = true): Effect.Effect<void, unknown> {
         return Effect.suspend(() => {
             const name = buildSandboxName(this.identity);
-            console.log(`[sandbox-instance:${this.identity}] stop dispose=${dispose} name=${name}`);
+            this.logger?.info({ dispose, name }, "stop sandbox");
             const stopCurrent = this.sandbox
-                ? Effect.ignore(Effect.tryPromise(() => this.sandbox!.stop()))
+                ? this.stopCurrentSandboxEffect()
                 : Effect.void;
 
             return stopCurrent.pipe(
-                Effect.andThen(Effect.sync(() => {
-                    this.sandbox = null;
-                    this.client = null;
-                    this.releasePort();
-                    this.status = "stopped";
-                })),
+                Effect.andThen(() => this.finalizeRuntimeEffect("stopped", dispose)),
                 Effect.andThen(
                     Effect.tryPromise(() => Sandbox.get(name)).pipe(
-                        Effect.andThen((existing) => Effect.tryPromise(() => existing.stop())),
+                        Effect.andThen((existing) =>
+                            Effect.tryPromise(() => existing.stop()),
+                        ),
                         Effect.ignore,
                     ),
                 ),
-                Effect.andThen(Effect.sync(() => {
-                    if (dispose) this.onDispose(this.identity, this);
-                })),
             );
         });
     }
@@ -159,50 +167,102 @@ class SandboxInstance implements SandboxRuntime {
         return Effect.suspend(() => {
             const name = buildSandboxName(this.identity);
             const killCurrent = this.sandbox
-                ? Effect.ignore(Effect.tryPromise(() => this.sandbox!.kill?.() ?? Promise.resolve()))
+                ? Effect.ignore(
+                      Effect.tryPromise(
+                          () => this.sandbox!.kill?.() ?? Promise.resolve(),
+                      ),
+                  )
                 : Effect.void;
 
             return killCurrent.pipe(
-                Effect.andThen(Effect.sync(() => {
-                    this.sandbox = null;
-                    this.client = null;
-                    this.releasePort();
-                    this.status = "stopped";
-                })),
-                Effect.andThen(Effect.ignore(Effect.tryPromise(() => Sandbox.remove(name)))),
-                Effect.andThen(Effect.sync(() => this.onDispose(this.identity, this))),
+                Effect.andThen(() => this.finalizeRuntimeEffect("stopped", true)),
+                Effect.andThen(
+                    Effect.ignore(
+                        Effect.tryPromise(() => Sandbox.remove(name)),
+                    ),
+                ),
             );
         });
     }
 
     private runExclusive<T>(effect: Effect.Effect<T, unknown>): Promise<T> {
-        return Effect.runPromise(
-            this.mutex.withPermit(effect),
-        );
+        return Effect.runPromise(this.mutex.withPermit(effect));
+    }
+
+    private provisionFilesEffect(
+        sourcePaths: string[],
+    ): Effect.Effect<Map<string, string>, unknown> {
+        return Effect.suspend(() => {
+            if (!this.sandbox) {
+                return Effect.fail(new Error(`Sandbox not running for: ${this.identity}`));
+            }
+            const fs = this.sandbox.fs();
+            const mediaDir = "/workspace/.opencode-router/media";
+            return Effect.tryPromise(() => fs.mkdir(mediaDir)).pipe(
+                Effect.ignore,
+                Effect.andThen(
+                    Effect.forEach(sourcePaths, (src) => {
+                        const dst = `${mediaDir}/${basename(src)}`;
+                        return Effect.tryPromise(() => fs.copyFromHost(src, dst)).pipe(
+                            Effect.as([src, dst] as const),
+                        );
+                    }),
+                ),
+                Effect.map((entries) => new Map(entries)),
+            );
+        });
+    }
+
+    private stopCurrentSandboxEffect(): Effect.Effect<void, never> {
+        return Effect.ignore(Effect.tryPromise(() => this.sandbox!.stop()));
+    }
+
+    private finalizeRuntimeEffect(
+        status: SandboxRuntime["status"],
+        dispose: boolean,
+    ): Effect.Effect<void> {
+        return Effect.sync(() => {
+            this.sandbox = null;
+            this.client = null;
+            this.releasePort();
+            this.status = status;
+            if (dispose) this.onDispose(this.identity, this);
+        });
     }
 
     private startEffect(): Effect.Effect<SandboxConnection, unknown> {
         return Effect.suspend(() => {
             const name = buildSandboxName(this.identity);
-            console.log(`[sandbox-instance:${this.identity}] start name=${name}`);
+            this.logger?.info({ name }, "start sandbox");
             const hostPort = this.ports.allocate();
             const password = randomUUID().replace(/-/g, "").slice(0, 20);
             const paths = initFilesystem(this.identity, this.cfg);
-            const builder = newBuilder(name, this.cfg, hostPort, password, paths);
-            console.log(`[sandbox-instance:${this.identity}] allocated port=${hostPort} workspace=${paths.workspaceHostPath}`);
+            const builder = newBuilder(
+                name,
+                this.cfg,
+                hostPort,
+                password,
+                paths,
+            );
+            this.logger?.info(
+                { port: hostPort, workspace: paths.workspaceHostPath },
+                "allocated sandbox resources",
+            );
 
             return Effect.tryPromise({
                 try: () => builder.createDetached(),
                 catch: (err) => {
                     this.ports.release(hostPort);
-                    console.error(`[sandbox-instance:${this.identity}] createDetached failed`, err);
-                    return new Error(`Sandbox "${name}" creation failed: ${String(err)}`);
+                    this.logger?.error({ err }, "createDetached failed");
+                    return new Error(
+                        `Sandbox "${name}" creation failed: ${String(err)}`,
+                    );
                 },
             }).pipe(
                 Effect.flatMap((sb) =>
                     this.startOpencodeProcessEffect(sb).pipe(
                         Effect.flatMap((handle) => {
-                            console.log(`[sandbox-instance:${this.identity}] sandbox created, opencode exec started`);
+                            this.logger?.info("sandbox created, opencode exec started");
                             this.sandbox = sb;
                             this.sandboxName = name;
                             this.image = this.cfg.opencodeImage;
@@ -215,7 +275,10 @@ class SandboxInstance implements SandboxRuntime {
                             this.lastHealthCheckAt = Date.now();
                             this.createdAt = Date.now();
                             this.done = this.monitorOpencode(sb, handle);
-                            const client = createOpencodeServerClient(hostPort, password);
+                            const client = createOpencodeServerClient(
+                                hostPort,
+                                password,
+                            );
                             this.client = client;
 
                             return this.readyEffect(client).pipe(
@@ -228,68 +291,119 @@ class SandboxInstance implements SandboxRuntime {
         });
     }
 
-    private readyEffect(client: OpencodeClient): Effect.Effect<SandboxConnection, unknown> {
-        console.log(`[sandbox-instance:${this.identity}] wait ready`);
+    private readyEffect(
+        client: OpencodeClient,
+    ): Effect.Effect<SandboxConnection, unknown> {
+        this.logger?.info("wait opencode ready");
         return Effect.tryPromise(() => waitForOpenCodeReady(client)).pipe(
-            Effect.andThen(Effect.sync(() => {
-                this.lastHealthCheckAt = Date.now();
-                this.lastActivityAt = Date.now();
-                this.status = "running";
-                console.log(`[sandbox-instance:${this.identity}] ready port=${this.hostPort}`);
-                return this.buildConnection();
-            })),
+            Effect.andThen(
+                Effect.sync(() => {
+                    this.lastHealthCheckAt = Date.now();
+                    this.lastActivityAt = Date.now();
+                    this.status = "running";
+                    this.logger?.info({ port: this.hostPort }, "opencode ready");
+                    return this.buildConnection();
+                }),
+            ),
         );
     }
 
     private crashEffect(sb: Sandbox): Effect.Effect<void, never> {
         return Effect.ignore(Effect.tryPromise(() => sb.stop())).pipe(
-            Effect.andThen(Effect.sync(() => {
-                console.error(`[sandbox-instance:${this.identity}] crash during startup`);
-                this.sandbox = null;
-                this.client = null;
-                this.releasePort();
-                this.status = "crashed";
-                this.onDispose(this.identity, this);
-            })),
+            Effect.andThen(
+                Effect.sync(() => {
+                    this.logger?.error("crash during startup");
+                }),
+            ),
+            Effect.andThen(() => this.finalizeRuntimeEffect("crashed", true)),
         );
     }
 
-    private startOpencodeProcessEffect(sb: Sandbox): Effect.Effect<ExecHandle, unknown> {
-        console.log(`[sandbox-instance:${this.identity}] exec opencode serve`);
-        return Effect.tryPromise(() => sb.execStream("opencode", [
+    private startOpencodeProcessEffect(
+        sb: Sandbox,
+    ): Effect.Effect<ExecHandle, unknown> {
+        this.logger?.info("exec opencode serve");
+        return Effect.tryPromise(() =>
+            sb.execStream("opencode", [
                 "serve",
                 "--port",
                 String(OPENCODE_GUEST_PORT),
                 "--hostname",
                 "0.0.0.0",
                 "--log-level",
-                "ERROR",
-            ]));
+                "INFO",
+                "--print-logs",
+            ]),
+        );
     }
 
-    private async monitorOpencode(sb: Sandbox, handle: ExecHandle): Promise<void> {
-            let ok = false;
-            try {
-                for await (const e of handle) {
-                    if (e.kind === "exited") {
-                        ok = e.code === 0;
-                        break;
-                    }
+    private async monitorOpencode(
+        sb: Sandbox,
+        handle: ExecHandle,
+    ): Promise<void> {
+        let ok = false;
+        try {
+            const events = handle[Symbol.asyncIterator]();
+            while (true) {
+                const result = await Promise.race([
+                    events.next(),
+                    new Promise<"idle">((resolve) =>
+                        setTimeout(resolve, this.cfg.idleTtlMs, "idle"),
+                    ),
+                ]);
+                if (result === "idle") {
+                    ok = true;
+                    this.logger?.info({ identity: this.identity }, "opencode idle timeout");
+                    break;
                 }
-            } catch {
-                /* stream closed */
-            } finally {
-                this.status = ok ? "stopped" : "crashed";
-                console.log(`[sandbox-instance:${this.identity}] opencode exited ok=${ok}`);
-                try {
-                    await sb.stop();
-                } catch {
-                    /* ok */
+                if (result.done) {
+                    ok = true;
+                    break;
                 }
-                this.releasePort();
-                this.client = null;
-                this.onDispose(this.identity, this);
+                const e = result.value;
+                this.lastActivityAt = Date.now();
+                this.logOpencodeEvent(e);
+                if (e.kind === "exited") {
+                    ok = e.code === 0;
+                    break;
+                }
             }
+        } catch {
+            /* stream closed */
+        } finally {
+            this.logger?.info({ ok }, "opencode exited");
+            await Effect.runPromise(
+                Effect.ignore(Effect.tryPromise(() => sb.stop())).pipe(
+                    Effect.andThen(() =>
+                        this.finalizeRuntimeEffect(ok ? "stopped" : "crashed", true),
+                    ),
+                ),
+            );
+        }
+    }
+
+    private logOpencodeEvent(e: ExecEvent): void {
+        const log = this.logger;
+        if (!log?.isLevelEnabled("debug")) return;
+        if (e.kind === "stdout" || e.kind === "stderr") {
+            log.debug(
+                {
+                    identity: this.identity,
+                    stream: e.kind,
+                    output: this.decodeExecOutput(e),
+                },
+                "opencode output",
+            );
+            return;
+        }
+        log.debug({ identity: this.identity, event: e }, "opencode event");
+    }
+
+    private decodeExecOutput(e: ExecEvent): string | undefined {
+        const data = "data" in e ? e.data : undefined;
+        if (typeof data === "string") return data;
+        if (data instanceof Uint8Array) return Buffer.from(data).toString("utf8");
+        return undefined;
     }
 
     private releasePort(): void {
@@ -303,9 +417,12 @@ class SandboxInstance implements SandboxRuntime {
         const u = `http://127.0.0.1:${this.hostPort}`;
         return {
             sandboxName: this.sandboxName,
+            sandboxId: this.sandboxName,
             baseUrl: u,
             hostPort: this.hostPort,
-            client: this.client ?? createOpencodeServerClient(this.hostPort, this.serverPassword),
+            client:
+                this.client ??
+                createOpencodeServerClient(this.hostPort, this.serverPassword),
             release: async () => {},
         };
     }
@@ -319,17 +436,25 @@ export class SandboxManager implements OpenCodeSandboxManager {
         this.ports = new PortAllocator(cfg.portStart, cfg.portEnd);
     }
 
+    setLogger(logger: Logger | undefined): void {
+        this.cfg.logger = logger;
+        for (const instance of this.instances.values()) {
+            instance.setLogger(logger?.child({ identity: instance.identity }));
+        }
+    }
+
     // ── ensureRuntime — SandboxInstance owns lifecycle state ─
 
     async ensureRuntime(identity: string): Promise<SandboxConnection> {
-        console.log(`[sandbox-manager] ensure ${identity}`);
+        this.cfg.logger?.info({ identity }, "ensure sandbox runtime");
         let instance = this.instances.get(identity);
         if (!instance) {
-            console.log(`[sandbox-manager] create instance ${identity}`);
+            this.cfg.logger?.info({ identity }, "create sandbox instance");
             instance = new SandboxInstance(
                 identity,
                 this.cfg,
                 this.ports,
+                this.cfg.logger?.child({ identity }),
                 (id, disposed) => {
                     if (this.instances.get(id) === disposed) {
                         this.instances.delete(id);
@@ -339,7 +464,10 @@ export class SandboxManager implements OpenCodeSandboxManager {
             this.instances.set(identity, instance);
         }
         const conn = await instance.ensure();
-        console.log(`[sandbox-manager] ensure done ${identity} port=${conn.hostPort}`);
+        this.cfg.logger?.info(
+            { identity, port: conn.hostPort },
+            "ensure sandbox runtime done",
+        );
         return conn;
     }
 
@@ -351,6 +479,15 @@ export class SandboxManager implements OpenCodeSandboxManager {
 
     async listRuntimes(): Promise<SandboxRuntime[]> {
         return Array.from(this.instances.values());
+    }
+
+    async provisionFiles(
+        identity: string,
+        sourcePaths: string[],
+    ): Promise<Map<string, string>> {
+        const instance = this.instances.get(identity);
+        if (!instance) throw new Error(`Sandbox not found for: ${identity}`);
+        return instance.provisionFiles(sourcePaths);
     }
 
     // ── Stop / Remove ───────────────────────────────────────
@@ -367,27 +504,20 @@ export class SandboxManager implements OpenCodeSandboxManager {
         this.instances.delete(identity);
     }
 
-    // ── Lifecycle (delegated to microsandbox) ───────────────
-
     async cleanupIdleRuntimes(): Promise<void> {
         const now = Date.now();
-        for (const [identity, instance] of this.instances) {
-            if (instance.hostPort === 0) continue;
+        for (const [identity, instance] of this.instances.entries()) {
             if (now - instance.lastActivityAt < this.cfg.idleTtlMs) continue;
-
-            const status = instance.status;
-            if (status !== "running" && status !== "draining") continue;
-
-            const activeSessions = await this.hasActiveSessions(instance);
-            if (!activeSessions) await this.stopRuntime(identity, "idle");
+            await instance.stop();
+            this.instances.delete(identity);
         }
     }
 
     startCleanupLoop(): () => void {
         const timer = setInterval(() => {
-            void this.cleanupIdleRuntimes().catch((err) =>
-                console.warn("[sandbox] cleanup failed", err),
-            );
+            void this.cleanupIdleRuntimes().catch((err) => {
+                this.cfg.logger?.warn({ err }, "sandbox cleanup failed");
+            });
         }, this.cfg.cleanupIntervalMs);
         timer.unref?.();
         return () => clearInterval(timer);
@@ -396,18 +526,6 @@ export class SandboxManager implements OpenCodeSandboxManager {
     async shutdown(): Promise<void> {
         for (const instance of this.instances.values()) {
             await instance.stop();
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════
-    // Internal
-    // ═══════════════════════════════════════════════════════
-
-    private async hasActiveSessions(r: SandboxRuntime): Promise<boolean> {
-        try {
-            return await hasActiveSessions(createOpencodeServerClient(r.hostPort, r.serverPassword));
-        } catch {
-            return true;
         }
     }
 

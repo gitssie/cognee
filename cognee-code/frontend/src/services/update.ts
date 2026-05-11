@@ -1,6 +1,5 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface UpdateResponse {
   status?: string;
@@ -32,7 +31,7 @@ export const UpdateService = {
       });
     }
 
-    const response = await axios.patch<UpdateResponse>(`${API_BASE}/api/v1/update`, formData, {
+    const response = await axios.patch<UpdateResponse>(`/api/v1/update`, formData, {
       params: { data_id: dataId, dataset_id: datasetId },
       headers: {
         'Content-Type': 'multipart/form-data',

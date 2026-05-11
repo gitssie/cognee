@@ -60,7 +60,6 @@
       ref="createDatasetDialogRef"
       v-model="showCreateDialog"
       :loading="creatingDataset"
-      :show-vault-key="vectorDbProvider === 'muninn'"
       @create="createDataset"
     />
 
@@ -248,9 +247,7 @@ function getCognifyOptions(): CognifyOptions | undefined {
   }
 
   return {
-    chunkSize: muninnChunkSize.value,
-    chunkOverlapRatio: muninnChunkOverlapRatio.value,
-    maxTextLength: muninnMaxTextLength.value,
+    chunks_per_batch: muninnChunkSize.value,
   };
 }
 
@@ -400,7 +397,8 @@ function startPipelineListeners() {
     if (activeCognifyRunId && payload.pipeline_run_id === activeCognifyRunId) {
       activeCognifyRunId = null;
       isCognifying.value = false;
-      $q.notify({ type: 'negative', message: 'Cognify failed.' });
+      const errMsg = payload.error ? `Cognify failed: ${payload.error}` : 'Cognify failed.';
+      $q.notify({ type: 'negative', message: errMsg, timeout: 10000 });
     }
   };
   bus.on('pipeline:error', onPipelineError);

@@ -6,7 +6,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 dependencies = [
-    # For local cognee repo usage remove comment bellow and add absolute path to cognee. Then run `uv sync --reinstall` in the mcp folder on local cognee changes.
+    # The cognee core engine is a local path dependency.
+    # DOCKER: when building via Dockerfile, WORKDIR is /root/workspace/github/cognee
+    #   and the full repo is available via COPY . ., so the absolute path works.
+    # LOCAL DEV: adjust to match your filesystem layout, e.g.:
+    #   "cognee[neo4j] @ file:///Users/me/projects/cognee"
     "cognee[neo4j] @ file:///root/workspace/github/cognee",
     #"cognee[postgres,docs,neo4j]==0.5.0",
     "pgvector>=0.3.5,<0.4",

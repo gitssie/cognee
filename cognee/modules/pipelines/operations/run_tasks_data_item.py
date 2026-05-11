@@ -145,6 +145,7 @@ async def run_tasks_data_item_incremental(
             "run_info": PipelineRunErrored(
                 pipeline_run_id=pipeline_run_id,
                 payload=repr(error),
+                error=str(error),
                 dataset_id=dataset.id,
                 dataset_name=dataset.name,
             ),

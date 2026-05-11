@@ -1,23 +1,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-
-import type { Config, ServerOptions } from "@opencode-ai/sdk/v2";
+import type { ServerOptions } from "@opencode-ai/sdk/v2/server";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = resolve(__dirname, "..");
 
-const DEFAULT_OPENCODE_HOSTNAME = "127.0.0.1";
-const DEFAULT_OPENCODE_PORT = 4096;
-const DEFAULT_OPENCODE_TIMEOUT = 30000;
-const DEFAULT_COGNEE_MCP_URL = "http://localhost:8000/mcp/";
 const DEFAULT_ROUTER_HEALTH_PORT = 3005;
-const DEFAULT_AGENT_NAME = "cognee-coder";
-const DEFAULT_AGENT_DESCRIPTION =
-    "AI coding assistant with persistent memory backed by the cognee knowledge graph";
-const DEFAULT_AGENT_MODEL = "deepseek/deepseek-v4-flash";
-
 export interface RouterRuntimePaths {
     rootDir: string;
     workspaceDir: string;
@@ -27,27 +17,52 @@ export interface RouterRuntimePaths {
 }
 
 export interface SandboxConfig {
+    /** Sandbox provider: "local" | "http" | "e2b".
+     *  Determined by presence of apiUrl (e2b) or mcpUrl (http). */
+    provider: "local" | "http" | "e2b";
+    
+    // ── Common ──────────────────────────────────────────
     /** Host root for per-user sandbox directories.
      *  Each identity gets `<sandboxRoot>/<identity>/` with `workspace/` and `data/` subdirs. */
     sandboxRoot: string;
-    /** Start of allocated localhost port range. */
-    portStart: number;
-    /** End of allocated localhost port range. */
-    portEnd: number;
     /** Idle TTL in ms before stopping a sandbox. */
     idleTtlMs: number;
     /** Max sandbox runtime in ms before forced drain. */
     maxRuntimeMs: number;
     /** Graceful stop timeout in ms. */
     stopTimeoutMs: number;
+    /** Cleanup check interval in ms. */
+    cleanupIntervalMs: number;
+    
+    // ── local / http (microsandbox) ─────────────────────
+    /** Start of allocated localhost port range. */
+    portStart: number;
+    /** End of allocated localhost port range. */
+    portEnd: number;
     /** OpenCode OCI image. */
     opencodeImage: string;
     /** Per-sandbox CPU count. */
     cpus: number;
     /** Per-sandbox memory in MB. */
     memoryMb: number;
-    /** Cleanup check interval in ms. */
-    cleanupIntervalMs: number;
+    
+    // ── http (MCP remote) ───────────────────────────────
+    /** MCP sandbox server URL. */
+    mcpUrl?: string;
+    
+    // ── e2b (Cube / E2B cloud) ──────────────────────────
+    /** E2B / Cube Sandbox API base URL.
+     *  Self-hosted Cube: "http://172.16.17.231:3000"
+     *  E2B cloud:       "" (omit → api.e2b.app) */
+    e2bApiUrl?: string;
+    /** E2B / Cube API key ("dummy" for Cube). */
+    e2bApiKey?: string;
+    /** E2B sandbox template ID. */
+    e2bTemplate?: string;
+    /** E2B sandbox initial timeout in ms. Defaults to idleTtlMs. */
+    e2bTimeoutMs?: number;
+    /** OpenCode server port inside E2B sandbox (default 4096). */
+    e2bOpencodePort?: number;
 }
 
 interface RouterConfigFile {
@@ -60,33 +75,32 @@ interface RouterConfigFile {
         healthHost?: string;
     };
     opencodeDirectory?: string;
-    opencode?: {
-        hostname?: string;
-        port?: number;
-        timeout?: number;
-        mcp?: {
-            cognee?: {
-                url?: string;
-                enabled?: boolean;
-            };
-        };
-        cogneeApi?: {
-            baseUrl?: string;
-            email?: string;
-            password?: string;
-            cookieName?: string;
-        };
-        agent?: {
-            name?: string;
-            description?: string;
-            model?: string;
-            steps?: number;
-            temperature?: number;
-            prompt?: string[];
-            permission?: Record<string, "allow" | "deny" | "ask">;
-        };
-        plugin?: string[];
+    sandbox?: {
+        rootDir?: string;
+        portStart?: number;
+        portEnd?: number;
+        image?: string;
+        cpus?: number;
+        memoryMb?: number;
+        idleTtlMs?: number;
+        maxRuntimeMs?: number;
+        stopTimeoutMs?: number;
+        cleanupIntervalMs?: number;
+        /** MCP sandbox server URL (triggers http provider). */
+        mcpUrl?: string;
+        /** E2B / Cube Sandbox API base URL (triggers e2b provider).
+         *  Self-hosted Cube: "http://172.16.17.231:3000" */
+        apiUrl?: string;
+        /** E2B / Cube API key ("dummy" for Cube). */
+        apiKey?: string;
+        /** E2B sandbox template ID. */
+        template?: string;
+        /** E2B sandbox initial timeout in ms. */
+        timeoutMs?: number;
+        /** OpenCode server port inside E2B sandbox. */
+        opencodePort?: number;
     };
+    opencode?: Record<string, unknown>;
     healthPort?: number;
     plugin?: unknown;
     channels?: unknown;
@@ -102,95 +116,6 @@ function parseInteger(value: string | undefined, fallback: number): number {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function readProjectConfig(): RouterConfigFile {
-    return readRouterConfigFile(getRouterRuntimePaths().configPath);
-}
-
-function getConfiguredAgentName(config: RouterConfigFile): string {
-    return config.opencode?.agent?.name?.trim() || DEFAULT_AGENT_NAME;
-}
-
-function setEnvDefault(name: string, value: string | undefined): void {
-    if (!process.env[name] && value?.trim()) {
-        process.env[name] = value.trim();
-    }
-}
-
-function applyConfiguredEnvironment(config: RouterConfigFile): void {
-    const cogneeApi = config.opencode?.cogneeApi;
-
-    setEnvDefault("COGNEE_API_URL", cogneeApi?.baseUrl);
-    setEnvDefault("COGNEE_API_EMAIL", cogneeApi?.email);
-    setEnvDefault("COGNEE_API_PASSWORD", cogneeApi?.password);
-    setEnvDefault("AUTH_TOKEN_COOKIE_NAME", cogneeApi?.cookieName);
-}
-
-export function buildOpencodeConfig(): Config {
-    const projectConfig = readProjectConfig();
-    applyConfiguredEnvironment(projectConfig);
-    const cogneeMcp = projectConfig.opencode?.mcp?.cognee;
-    const agentConfig = projectConfig.opencode?.agent;
-    const agentName = getConfiguredAgentName(projectConfig);
-    const opencodePlugins = projectConfig.opencode?.plugin ?? [];
-    const mcpHeaders: Record<string, string> = {};
-    const cogneeApiToken = process.env.COGNEE_API_TOKEN?.trim();
-
-    if (cogneeApiToken) {
-        mcpHeaders.Authorization = `Bearer ${cogneeApiToken}`;
-    }
-
-    return {
-        mcp: {
-            cognee: {
-                type: "remote" as const,
-                url:
-                    cogneeMcp?.url?.trim() ||
-                    process.env.COGNEE_MCP_URL?.trim() ||
-                    DEFAULT_COGNEE_MCP_URL,
-                enabled: cogneeMcp?.enabled ?? true,
-                ...(Object.keys(mcpHeaders).length > 0
-                    ? { headers: mcpHeaders }
-                    : {}),
-            },
-        },
-        ...(opencodePlugins.length ? { plugin: opencodePlugins } : {}),
-        agent: {
-            [agentName]: {
-                name: agentName,
-                description:
-                    agentConfig?.description?.trim() || DEFAULT_AGENT_DESCRIPTION,
-                model: agentConfig?.model?.trim() || DEFAULT_AGENT_MODEL,
-                prompt: agentConfig?.prompt?.join("\n") ?? "",
-                steps: agentConfig?.steps ?? 50,
-                temperature: agentConfig?.temperature ?? 0.1,
-                ...(agentConfig?.permission
-                    ? { permission: agentConfig.permission }
-                    : {}),
-            },
-        },
-    };
-}
-
-export function buildOpencodeOptions(): ServerOptions {
-    const projectConfig = readProjectConfig();
-    applyConfiguredEnvironment(projectConfig);
-    const opencodeConfig = projectConfig.opencode;
-
-    return {
-        hostname:
-            opencodeConfig?.hostname?.trim() ||
-            process.env.OPENCODE_HOST?.trim() || DEFAULT_OPENCODE_HOSTNAME,
-        port:
-            opencodeConfig?.port ??
-            parseInteger(process.env.OPENCODE_PORT, DEFAULT_OPENCODE_PORT),
-        timeout: parseInteger(
-            process.env.OPENCODE_START_TIMEOUT_MS,
-            opencodeConfig?.timeout ?? DEFAULT_OPENCODE_TIMEOUT,
-        ),
-        config: buildOpencodeConfig(),
-    };
-}
-
 export function getRouterRuntimePaths(): RouterRuntimePaths {
     const configPath = process.env.OPENCODE_ROUTER_CONFIG_PATH?.trim()
         ? resolve(process.env.OPENCODE_ROUTER_CONFIG_PATH.trim())
@@ -198,8 +123,14 @@ export function getRouterRuntimePaths(): RouterRuntimePaths {
     const projectConfig = readRouterConfigFile(configPath);
     const rootDir = process.env.OPENCODE_ROUTER_ROOT_DIR?.trim()
         ? resolve(process.env.OPENCODE_ROUTER_ROOT_DIR.trim())
-        : resolve(PROJECT_ROOT, projectConfig.router?.rootDir ?? ".opencode-router");
-    const workspaceDir = resolve(rootDir, projectConfig.router?.workspaceDir ?? "workspaces");
+        : resolve(
+              PROJECT_ROOT,
+              projectConfig.router?.rootDir ?? ".opencode-router",
+          );
+    const workspaceDir = resolve(
+        rootDir,
+        projectConfig.router?.workspaceDir ?? "workspaces",
+    );
     const dataDir = process.env.OPENCODE_ROUTER_DATA_DIR?.trim()
         ? resolve(process.env.OPENCODE_ROUTER_DATA_DIR.trim())
         : resolve(rootDir, projectConfig.router?.dataDir ?? "data");
@@ -261,59 +192,68 @@ export function ensureRouterRuntimeConfig(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Sandbox configuration (microsandbox per-user OpenCode sandboxes)
+// Classic-mode OpenCode server options.
 // ────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_SANDBOX_PORT_START = 42000;
-const DEFAULT_SANDBOX_PORT_END = 45999;
-const DEFAULT_SANDBOX_IDLE_TTL_MS = 3_600_000;      // 1 hour
-const DEFAULT_SANDBOX_MAX_RUNTIME_MS = 21_600_000;   // 6 hours
-const DEFAULT_SANDBOX_STOP_TIMEOUT_MS = 30_000;       // 30 seconds
-const DEFAULT_SANDBOX_CPU_COUNT = 1;
-const DEFAULT_SANDBOX_MEMORY_MB = 1024;
-const DEFAULT_SANDBOX_CLEANUP_INTERVAL_MS = 60_000;   // 1 minute
-const DEFAULT_OPENCODE_IMAGE = "ghcr.io/anomalyco/opencode:latest";
+export function buildOpencodeOptions(paths?: RouterRuntimePaths): ServerOptions {
+    const p = paths ?? getRouterRuntimePaths();
+    const cfg = readRouterConfigFile(p.configPath);
+    return {
+        hostname: process.env.OPENCODE_HOSTNAME?.trim() || "127.0.0.1",
+        port: parseInteger(process.env.OPENCODE_PORT, 0), // 0 = random available port
+        config: cfg.opencode as any,
+    };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Sandbox configuration — reads from opencode-router.json sandbox section,
+// with env-var overrides for backward compat.
+// ────────────────────────────────────────────────────────────────────────────
 
 export function buildSandboxConfig(paths: RouterRuntimePaths): SandboxConfig {
+    const cfg = readRouterConfigFile(paths.configPath);
+    const s = cfg.sandbox ?? {};
+    const root = paths.rootDir;
+    
+    // Determine provider: e2b → http → local
+    const e2bApiUrl = process.env.OPENCODE_SANDBOX_API_URL?.trim()
+        ?? (typeof s.apiUrl === "string" ? s.apiUrl.trim() : undefined);
+    const mcpUrl = process.env.OPENCODE_SANDBOX_MCP_URL?.trim()
+        ?? (typeof s.mcpUrl === "string" ? s.mcpUrl.trim() : undefined);
+    const provider: SandboxConfig["provider"] = e2bApiUrl !== undefined ? "e2b" : mcpUrl ? "http" : "local";
+
+    // Common
+    const idleTtlMs = parseInteger(process.env.OPENCODE_SANDBOX_IDLE_TTL_MS, s.idleTtlMs ?? 3_600_000);
+    const maxRuntimeMs = parseInteger(process.env.OPENCODE_SANDBOX_MAX_RUNTIME_MS, s.maxRuntimeMs ?? 21_600_000);
+
     return {
-        sandboxRoot:
-            process.env.OPENCODE_SANDBOX_ROOT?.trim() ||
-            resolve(paths.rootDir, "sandboxes"),
-        portStart: parseInteger(
-            process.env.OPENCODE_SANDBOX_PORT_START,
-            DEFAULT_SANDBOX_PORT_START,
-        ),
-        portEnd: parseInteger(
-            process.env.OPENCODE_SANDBOX_PORT_END,
-            DEFAULT_SANDBOX_PORT_END,
-        ),
-        idleTtlMs: parseInteger(
-            process.env.OPENCODE_SANDBOX_IDLE_TTL_MS,
-            DEFAULT_SANDBOX_IDLE_TTL_MS,
-        ),
-        maxRuntimeMs: parseInteger(
-            process.env.OPENCODE_SANDBOX_MAX_RUNTIME_MS,
-            DEFAULT_SANDBOX_MAX_RUNTIME_MS,
-        ),
-        stopTimeoutMs: parseInteger(
-            process.env.OPENCODE_SANDBOX_STOP_TIMEOUT_MS,
-            DEFAULT_SANDBOX_STOP_TIMEOUT_MS,
-        ),
-        opencodeImage:
-            process.env.OPENCODE_SANDBOX_IMAGE?.trim() ||
-            DEFAULT_OPENCODE_IMAGE,
-        cpus: parseInteger(
-            process.env.OPENCODE_SANDBOX_CPUS,
-            DEFAULT_SANDBOX_CPU_COUNT,
-        ),
-        memoryMb: parseInteger(
-            process.env.OPENCODE_SANDBOX_MEMORY_MB,
-            DEFAULT_SANDBOX_MEMORY_MB,
-        ),
-        cleanupIntervalMs: parseInteger(
-            process.env.OPENCODE_SANDBOX_CLEANUP_INTERVAL_MS,
-            DEFAULT_SANDBOX_CLEANUP_INTERVAL_MS,
-        ),
+        provider,
+        sandboxRoot: process.env.OPENCODE_SANDBOX_ROOT?.trim()
+            || (typeof s.rootDir === "string" && s.rootDir.trim()) || resolve(root, "sandboxes"),
+        idleTtlMs,
+        maxRuntimeMs,
+        stopTimeoutMs: parseInteger(process.env.OPENCODE_SANDBOX_STOP_TIMEOUT_MS, s.stopTimeoutMs ?? 30_000),
+        cleanupIntervalMs: parseInteger(process.env.OPENCODE_SANDBOX_CLEANUP_INTERVAL_MS, s.cleanupIntervalMs ?? 60_000),
+
+        // microsandbox (local / http)
+        portStart: parseInteger(process.env.OPENCODE_SANDBOX_PORT_START, s.portStart ?? 42000),
+        portEnd: parseInteger(process.env.OPENCODE_SANDBOX_PORT_END, s.portEnd ?? 45999),
+        opencodeImage: process.env.OPENCODE_SANDBOX_IMAGE?.trim()
+            || (typeof s.image === "string" && s.image.trim()) || "ghcr.io/anomalyco/opencode:latest",
+        cpus: parseInteger(process.env.OPENCODE_SANDBOX_CPUS, s.cpus ?? 1),
+        memoryMb: parseInteger(process.env.OPENCODE_SANDBOX_MEMORY_MB, s.memoryMb ?? 1024),
+
+        // http (MCP)
+        mcpUrl,
+
+        // e2b
+        e2bApiUrl: e2bApiUrl ?? "",
+        e2bApiKey: process.env.OPENCODE_SANDBOX_API_KEY?.trim()
+            ?? (typeof s.apiKey === "string" ? s.apiKey.trim() : "dummy"),
+        e2bTemplate: process.env.OPENCODE_SANDBOX_TEMPLATE?.trim()
+            ?? (typeof s.template === "string" ? s.template.trim() : "opencode-tools"),
+        e2bTimeoutMs: parseInteger(process.env.OPENCODE_SANDBOX_TIMEOUT_MS, s.timeoutMs ?? idleTtlMs),
+        e2bOpencodePort: parseInteger(process.env.OPENCODE_SANDBOX_OPENCODE_PORT, s.opencodePort ?? 4096),
     };
 }
 

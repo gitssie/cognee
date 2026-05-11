@@ -3,7 +3,10 @@ from uuid import UUID, NAMESPACE_OID, uuid5
 
 from cognee.infrastructure.databases.graph import get_graph_engine
 from cognee.modules.engine.models import NodeSet
-from cognee.context_global_variables import set_database_global_context_variables
+from cognee.context_global_variables import (
+    set_database_global_context_variables,
+    global_context_variables as _gcv,
+)
 from cognee.tasks.codingagents.coding_rule_associations import Rule, add_rule_associations
 from cognee.tasks.storage import add_data_points
 
@@ -20,28 +23,46 @@ async def get_rules_with_ids(
 
     If project_id is given, switches the DB context to that project's dedicated
     Dataset before querying. Otherwise queries the global (default) graph DB.
+
+    Always restores the global context after querying, so side effects from one
+    request do not corrupt subsequent requests.
     """
-    if project_id is not None:
-        from src.modules.projects.service import get_project
+    # Save current context
+    orig_dataset_id = _gcv.get("dataset_id")
+    orig_user_id = _gcv.get("user_id")
 
-        project = await get_project(project_id, owner_id)
-        if project is not None:
-            await set_database_global_context_variables(project.dataset_id, owner_id)
+    try:
+        if project_id is not None:
+            from src.modules.projects.service import get_project
 
-    graph_engine = await get_graph_engine()
-    nodes_data, _ = await graph_engine.get_nodeset_subgraph(
-        node_type=NodeSet, node_name=[_DEFAULT_NODESET]
-    )
+            project = await get_project(project_id, owner_id)
+            if project is not None:
+                await set_database_global_context_variables(project.dataset_id, owner_id)
 
-    return [
-        {"id": str(item[1]["id"]), "text": item[1]["text"]}
-        for item in nodes_data
-        if isinstance(item, tuple)
-        and len(item) == 2
-        and isinstance(item[1], dict)
-        and "id" in item[1]
-        and "text" in item[1]
-    ]
+        graph_engine = await get_graph_engine()
+        nodes_data, _ = await graph_engine.get_nodeset_subgraph(
+            node_type=NodeSet, node_name=[_DEFAULT_NODESET]
+        )
+
+        return [
+            {"id": str(item[1]["id"]), "text": item[1]["text"]}
+            for item in nodes_data
+            if isinstance(item, tuple)
+            and len(item) == 2
+            and isinstance(item[1], dict)
+            and "id" in item[1]
+            and "text" in item[1]
+        ]
+    finally:
+        # Restore original context
+        if orig_dataset_id is not None:
+            _gcv["dataset_id"] = orig_dataset_id
+        else:
+            _gcv.pop("dataset_id", None)
+        if orig_user_id is not None:
+            _gcv["user_id"] = orig_user_id
+        else:
+            _gcv.pop("user_id", None)
 
 
 async def delete_rule_by_id(rule_id: str) -> None:

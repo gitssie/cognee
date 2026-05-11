@@ -8,18 +8,30 @@
  * that may differ between the root and vendor node_modules.
  */
 
+import { OpencodeClient } from "@opencode-ai/sdk/v2";
+
 /** Session-scoped client handle. */
 export interface ClientHandle {
-  /** Use this client for session operations (prompt, abort, compact, etc.). */
-  client: any; // OpencodeClient — opaque to avoid cross-node_modules type mismatch
-  /** Release the handle when done. */
-  release(): Promise<void>;
+    /** Use this client for session operations (prompt, abort, compact, etc.). */
+    client: OpencodeClient; // OpencodeClient — opaque to avoid cross-node_modules type mismatch
+    /** Provider sandbox ID, e.g. E2B sandboxId. */
+    sandboxId?: string;
+    /** Release the handle when done. */
+    release(): Promise<void>;
 }
 
 /** Provider-level health status. */
 export interface ProviderHealth {
-  healthy: boolean;
-  version?: string;
+    healthy: boolean;
+    version?: string;
+}
+
+export interface ClientSessionContext {
+    channel: string;
+    identityId: string;
+    peerKey: string;
+    directory: string;
+    sandboxId?: string | null;
 }
 
 /**
@@ -30,40 +42,35 @@ export interface ProviderHealth {
  * - SandboxClientProvider (per-user microsandbox)
  */
 export interface OpenCodeClientProvider {
-  /** Obtain a client for a specific session identified by channel/identity/peer. */
-  getClientForSession(
-    channel: string,
-    identityId: string,
-    peerKey: string,
-    directory: string,
-  ): Promise<ClientHandle>;
+    /** Provider execution mode. Older providers may omit this and are treated as local. */
+    readonly kind?: "local" | "sandbox";
 
-  /** Synchronous client for a known directory (shared server only). */
-  getClientForDirectory(directory: string): any; // OpencodeClient
+    /** Legacy directory-scoped access. New code should use getClientForSession. */
+    getClientForDirectory(directory: string): Promise<ClientHandle>;
 
-  /** Get provider-level health. */
-  getHealth(): Promise<ProviderHealth>;
+    /** Obtain a client for a specific session identified by channel/identity/peer. */
+    getClientForSession(context: ClientSessionContext): Promise<ClientHandle>;
 
-  /** Subscribe to events for a directory (may be no-op in sandbox mode). */
-  ensureEventSubscription(directory: string): void;
+    /** Get provider-level health. */
+    getHealth(): Promise<ProviderHealth>;
 
-  /**
-   * Provision files into a workspace directory so the OpenCode client inside
-   * can access them (read, process, attach to prompts).
-   *
-   * Classic mode: moves files to the local target directory.
-   * Sandbox mode:  syncs/copies files into the VM's workspace host mount.
-   *
-   * @returns Map of sourcePath → accessiblePath inside the workspace.
-   */
-  provisionFiles(
-    sourcePaths: string[],
-    targetDirectory: string,
-    channel: string,
-    identityId: string,
-    peerKey: string,
-  ): Promise<Map<string, string>>;
+    /**
+     * Provision files into a workspace directory so the OpenCode client inside
+     * can access them (read, process, attach to prompts).
+     *
+     * Classic mode: moves files to the local target directory.
+     * Sandbox mode:  syncs/copies files into the VM's workspace host mount.
+     *
+     * @returns Map of sourcePath → accessiblePath inside the workspace.
+     */
+    provisionFiles(
+        sourcePaths: string[],
+        targetDirectory: string,
+        channel: string,
+        identityId: string,
+        peerKey: string,
+    ): Promise<Map<string, string>>;
 
-  /** Shut down the provider and release resources. */
-  shutdown(): Promise<void>;
+    /** Shut down the provider and release resources. */
+    shutdown(): Promise<void>;
 }

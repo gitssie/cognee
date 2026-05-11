@@ -13,6 +13,7 @@ from cognee.modules.users.models import (
     UserTenant,
     UserRole,
     Principal,
+    Dataset,
 )
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.infrastructure.databases.relational import get_relational_engine
@@ -73,7 +74,16 @@ async def get_tenant(tenant_id: UUID, user: User = Depends(get_authenticated_use
 async def get_tenant_users(tenant_id: UUID, user: User = Depends(get_authenticated_user)):
     db_engine = get_relational_engine()
     async with db_engine.get_async_session() as session:
-        # Check if requester is in tenant (omitted for brevity, assume strictly scoped by UI for now or added later)
+        # Verify requester is in this tenant
+        membership = await session.scalar(
+            select(UserTenant).where(
+                UserTenant.tenant_id == tenant_id,
+                UserTenant.user_id == user.id,
+            )
+        )
+        if not membership:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+
         query = (
             select(User)
             .join(UserTenant, User.id == UserTenant.user_id)
@@ -101,6 +111,23 @@ async def get_roles(user: User = Depends(get_authenticated_user)):
 async def get_dataset_permissions(dataset_id: UUID, user: User = Depends(get_authenticated_user)):
     db_engine = get_relational_engine()
     async with db_engine.get_async_session() as session:
+        # Only dataset owner or users with "share" permission may view ACLs
+        dataset = await session.get(Dataset, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        if dataset.owner_id != user.id:
+            acl_check = await session.scalar(
+                select(ACL).where(
+                    ACL.dataset_id == dataset_id,
+                    ACL.principal_id == user.id,
+                    ACL.permission.has(name="share"),
+                )
+            )
+            if not acl_check:
+                raise HTTPException(
+                    status_code=403, detail="Not authorized to view dataset permissions"
+                )
+
         query = (
             select(ACL)
             .options(selectinload(ACL.permission), selectinload(ACL.principal))
@@ -125,13 +152,28 @@ async def get_dataset_permissions(dataset_id: UUID, user: User = Depends(get_aut
 async def revoke_permission(acl_id: UUID, user: User = Depends(get_authenticated_user)):
     db_engine = get_relational_engine()
     async with db_engine.get_async_session() as session:
-        acl = await session.get(ACL, acl_id)
+        acl = await session.get(
+            ACL, acl_id, options=[selectinload(ACL.permission)]
+        )
         if not acl:
             raise HTTPException(status_code=404, detail="Permission not found")
 
-        # Verify user has 'share' permission on the dataset or is owner?
-        # For now, simplistic check: user must be authenticated.
-        # Ideally: check_permission_on_dataset(user, acl.dataset_id, "share")
+        # Only dataset owner or user with "share" permission may revoke ACLs
+        dataset = await session.get(Dataset, acl.dataset_id)
+        if not dataset or dataset.owner_id != user.id:
+            # Check "share" permission on the dataset
+            share_check = await session.scalar(
+                select(ACL).where(
+                    ACL.dataset_id == acl.dataset_id,
+                    ACL.principal_id == user.id,
+                    ACL.permission.has(name="share"),
+                )
+            )
+            if not share_check:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not authorized to revoke permissions on this dataset",
+                )
 
         await session.delete(acl)
         await session.commit()

@@ -22,9 +22,17 @@ async def lifespan(app: FastAPI):
     from cognee.infrastructure.databases.relational import get_relational_engine as _get_rel
     from cognee.infrastructure.databases.relational.ModelBase import Base
 
+    # Startup: Create tables
     _rel_engine = _get_rel()
     async with _rel_engine.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Startup: Ensure default user exists for login
+    from cognee.modules.users.methods.create_default_user import create_default_user
+    try:
+        await create_default_user()
+    except Exception:
+        pass  # Already exists or DB not ready yet — non-fatal
 
     # Startup: Patch push_to_queue to forward pipeline events to user SSE queues.
     # IMPORTANT: pipeline_execution_mode.py does `from ... import push_to_queue` (direct
@@ -55,6 +63,9 @@ async def lifespan(app: FastAPI):
                 unregister_pipeline_run(pipeline_run_id)
             elif isinstance(pipeline_run_info, PipelineRunErrored):
                 payload["type"] = "pipeline:error"
+                # Include the error detail so the frontend can display it
+                if hasattr(pipeline_run_info, "error") and pipeline_run_info.error:
+                    payload["error"] = pipeline_run_info.error
                 publish_for_run(pipeline_run_id, payload)
                 unregister_pipeline_run(pipeline_run_id)
             else:
@@ -81,11 +92,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Configuration
+# CORS Configuration — only explicit origins when using credentials
 origins = [
     "http://localhost:9000",  # Quasar default
     "http://localhost:3000",
-    "*",
+    "http://localhost:8000",  # frontend via nginx proxy
 ]
 
 app.add_middleware(

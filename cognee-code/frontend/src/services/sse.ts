@@ -39,6 +39,7 @@ export interface PipelineEventPayload {
   dataset_id?: string;
   dataset_name?: string;
   status: string;
+  error?: string;
   [key: string]: unknown;
 }
 

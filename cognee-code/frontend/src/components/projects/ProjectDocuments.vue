@@ -145,9 +145,7 @@ function getCognifyOptions(): CognifyOptions | undefined {
   }
 
   return {
-    chunkSize: muninnChunkSize.value,
-    chunkOverlapRatio: muninnChunkOverlapRatio.value,
-    maxTextLength: muninnMaxTextLength.value,
+    chunks_per_batch: muninnChunkSize.value,
   };
 }
 

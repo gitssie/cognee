@@ -1,6 +1,5 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface User {
   id: string;
@@ -44,41 +43,49 @@ export const AuthService = {
     formData.append('password', credentials.password);
 
     await axios.post(
-      `${API_BASE}/api/v1/auth/login`,
+      `/api/v1/auth/login`,
       formData,
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, ...(timeout !== undefined && { timeout }) },
     );
   },
 
   async logout(): Promise<void> {
-    await axios.post(`${API_BASE}/api/v1/auth/logout`);
+    await axios.post(`/api/v1/auth/logout`);
   },
 
   async register(data: RegisterData): Promise<User> {
-    const response = await axios.post<User>(`${API_BASE}/api/v1/auth/register`, data);
+    const response = await axios.post<User>(`/api/v1/auth/register`, data);
     return response.data;
   },
 
   async getCurrentUser(): Promise<User> {
-    const response = await axios.get<User>(`${API_BASE}/api/v1/users/me`);
+    const response = await axios.get<User>(`/api/v1/users/me`);
     return response.data;
   },
 
   async updateCurrentUser(data: UserUpdate): Promise<User> {
-    const response = await axios.patch<User>(`${API_BASE}/api/v1/users/me`, data);
+    const response = await axios.patch<User>(`/api/v1/users/me`, data);
     return response.data;
   },
 
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    // FastAPI-Users exposes PATCH /api/v1/users/me with password change
+    await axios.patch('/api/v1/users/me', {
+      password: newPassword,
+      old_password: oldPassword,
+    });
+  },
+
   async forgotPassword(email: string): Promise<void> {
-    await axios.post(`${API_BASE}/api/v1/auth/forgot-password`, { email });
+    await axios.post(`/api/v1/auth/forgot-password`, { email });
   },
 
   async resetPassword(token: string, password: string): Promise<void> {
-    await axios.post(`${API_BASE}/api/v1/auth/reset-password`, { token, password });
+    await axios.post(`/api/v1/auth/reset-password`, { token, password });
   },
 
   async verifyToken(token: string): Promise<User> {
-    const response = await axios.post<User>(`${API_BASE}/api/v1/auth/verify`, { token });
+    const response = await axios.post<User>(`/api/v1/auth/verify`, { token });
     return response.data;
   },
 };
@@ -86,16 +93,16 @@ export const AuthService = {
 // User management (admin)
 export const UserService = {
   async getUser(id: string): Promise<User> {
-    const response = await axios.get<User>(`${API_BASE}/api/v1/users/${id}`);
+    const response = await axios.get<User>(`/api/v1/users/${id}`);
     return response.data;
   },
 
   async updateUser(id: string, data: UserUpdate): Promise<User> {
-    const response = await axios.patch<User>(`${API_BASE}/api/v1/users/${id}`, data);
+    const response = await axios.patch<User>(`/api/v1/users/${id}`, data);
     return response.data;
   },
 
   async deleteUser(id: string): Promise<void> {
-    await axios.delete(`${API_BASE}/api/v1/users/${id}`);
+    await axios.delete(`/api/v1/users/${id}`);
   },
 };

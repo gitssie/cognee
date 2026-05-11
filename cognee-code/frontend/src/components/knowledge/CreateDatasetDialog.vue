@@ -5,7 +5,7 @@
         <div class="text-h6">{{ t('knowledge.createDataset') }}</div>
       </q-card-section>
 
-      <q-card-section class="q-pt-none q-gutter-sm">
+      <q-card-section class="q-pt-none">
         <q-input
           dense
           v-model="name"
@@ -14,16 +14,6 @@
           :label="t('knowledge.datasetName')"
           :rules="[val => !!val || t('knowledge.fieldRequired')]"
           :disable="loading"
-        />
-        <q-input
-          v-if="showVaultKey"
-          dense
-          v-model="vaultApiKey"
-          :label="t('knowledge.muninnVaultApiKey')"
-          placeholder="mk_..."
-          type="password"
-          :disable="loading"
-          :hint="t('knowledge.muninnVaultHint')"
         />
       </q-card-section>
 
@@ -53,7 +43,6 @@ import { useI18n } from 'vue-i18n';
 const props = defineProps<{
   modelValue: boolean;
   loading?: boolean;
-  showVaultKey?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -62,7 +51,6 @@ const emit = defineEmits<{
 }>();
 
 const name = ref('');
-const vaultApiKey = ref<string | null>(null);
 const { t } = useI18n();
 
 const isOpen = computed({
@@ -71,22 +59,17 @@ const isOpen = computed({
 });
 
 function onSubmit() {
-  if (name.value && !props.loading) {
-    emit('create', name.value, vaultApiKey.value || null);
-    // Note: Parent should call close() after successful API response
-  }
+  if (!name.value || props.loading) return;
+  emit('create', name.value, null);
 }
 
 function onCancel() {
   name.value = '';
-  vaultApiKey.value = null;
   isOpen.value = false;
 }
 
-// Called by parent after successful creation
 function close() {
   name.value = '';
-  vaultApiKey.value = null;
   isOpen.value = false;
 }
 

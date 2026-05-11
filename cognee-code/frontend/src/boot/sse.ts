@@ -13,17 +13,35 @@
 import { defineBoot } from '#q-app/wrappers';
 import { EventBus } from 'quasar';
 import { initSseService, destroySseService } from 'src/services/sse';
+import { AuthService } from 'src/services/auth';
 
-export default defineBoot(({ app }) => {
+export default defineBoot(async ({ app }) => {
   const bus = new EventBus();
-
-  // Make the bus injectable in all components
   app.provide('sseBus', bus);
 
-  // Open the global SSE connection — forwards all server events onto the bus
-  initSseService(bus);
+  let sseStarted = false;
 
-  // Clean up on app unmount (relevant mainly for SSR / hot-reload)
+  function startSse() {
+    if (sseStarted) return;
+    sseStarted = true;
+    initSseService(bus);
+  }
+
+  // 已登录 → 直接启动
+  try {
+    await AuthService.getCurrentUser();
+    startSse();
+  } catch { /* 未登录，等 auth:login 事件 */ }
+
+  // 登录成功后由 LoginPage 触发
+  bus.on('auth:login', startSse);
+
+  // 登出时关闭
+  bus.on('auth:logout', () => {
+    sseStarted = false;
+    destroySseService();
+  });
+
   app.unmount = (() => {
     const originalUnmount = app.unmount.bind(app);
     return () => {

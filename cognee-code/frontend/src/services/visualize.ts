@@ -1,6 +1,5 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface GraphNode {
   id: string;
@@ -22,7 +21,7 @@ export interface DatasetGraphResponse {
 
 export const VisualizeService = {
   async getDatasetGraph(datasetId: string): Promise<DatasetGraphResponse> {
-    const response = await axios.get<DatasetGraphResponse>(`${API_BASE}/api/v1/datasets/${datasetId}/graph`);
+    const response = await axios.get<DatasetGraphResponse>(`/api/v1/datasets/${datasetId}/graph`);
     return response.data;
   },
 };

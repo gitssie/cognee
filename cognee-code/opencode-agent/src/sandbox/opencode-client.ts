@@ -6,9 +6,13 @@ const HEARTBEAT_MS = 1_000;
 const AGENTS_POLL_MS = 5_000;
 const START_TIMEOUT_MS = 120_000;
 
-export function createOpencodeServerClient(hostPort: number, password: string): OpencodeClient {
+export function createOpencodeServerClient(
+  hostPort: number,
+  password: string,
+  baseUrl?: string,
+): OpencodeClient {
   return createOpencodeClient({
-    baseUrl: `http://127.0.0.1:${hostPort}`,
+    baseUrl: baseUrl ?? `http://127.0.0.1:${hostPort}`,
     directory: "/workspace",
     responseStyle: "data",
     throwOnError: true,

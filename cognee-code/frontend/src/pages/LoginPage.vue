@@ -1,5 +1,5 @@
 <template>
-  <q-page class="flex flex-center bg-grey-2">
+  <div class="column flex-center window-height bg-grey-2">
     <q-card class="q-pa-lg" style="width: 400px; max-width: 90vw;">
       <q-card-section class="text-center">
         <div class="text-h4 text-primary q-mb-sm">Cognee-Code</div>
@@ -83,19 +83,21 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
-  </q-page>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, inject } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { useI18n } from 'vue-i18n';
 import { AuthService } from 'src/services/auth';
+import type { EventBus } from 'quasar';
 
 const router = useRouter();
 const $q = useQuasar();
 const { t } = useI18n();
+const bus = inject<EventBus>('sseBus')!;
 
 const isLogin = ref(true);
 const email = ref('');
@@ -109,11 +111,15 @@ const resetEmail = ref('');
 const resetLoading = ref(false);
 
 async function handleSubmit() {
+  email.value = email.value.trim();
+  password.value = password.value.trim();
+  confirmPassword.value = confirmPassword.value.trim();
   loading.value = true;
   try {
     if (isLogin.value) {
       await AuthService.login({ username: email.value, password: password.value });
       $q.notify({ color: 'positive', message: t('login.loginSuccess') });
+      bus.emit('auth:login');
       void router.push('/');
     } else {
       await AuthService.register({ email: email.value, password: password.value });
@@ -132,6 +138,7 @@ async function handleSubmit() {
 }
 
 async function handleForgotPassword() {
+  resetEmail.value = resetEmail.value.trim();
   if (!resetEmail.value) return;
   resetLoading.value = true;
   try {

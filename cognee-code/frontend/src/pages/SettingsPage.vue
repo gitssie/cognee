@@ -5,96 +5,92 @@
     <q-spinner v-if="loading" color="primary" size="3em" class="q-ma-xl" />
 
     <template v-else>
-      <!-- LLM Configuration -->
+      <!-- User Profile -->
       <q-card class="q-mb-md">
         <q-card-section>
-          <div class="text-h6">{{ t('settingsPage.llmConfiguration') }}</div>
-          <div class="text-subtitle2 text-grey">{{ t('settingsPage.llmSubtitle') }}</div>
+          <div class="text-h6">{{ t('settingsPage.account') }}</div>
         </q-card-section>
+        <q-card-section>
+          <q-list separator>
+            <q-item>
+              <q-item-section avatar><q-icon name="person" /></q-item-section>
+              <q-item-section>
+                <q-item-label caption>{{ t('settingsPage.email') }}</q-item-label>
+                <q-item-label>{{ userEmail }}</q-item-label>
+              </q-item-section>
+            </q-item>
+            <q-item>
+              <q-item-section avatar><q-icon name="verified_user" /></q-item-section>
+              <q-item-section>
+                <q-item-label caption>{{ t('settingsPage.role') }}</q-item-label>
+                <q-item-label>{{ userRole }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn color="primary" :label="t('settingsPage.changePassword')" icon="lock" @click="showChangePwd = true" />
+        </q-card-actions>
+      </q-card>
 
-        <q-card-section class="q-gutter-md">
-          <q-select
-            v-model="llmProvider"
-            :options="llmProviders"
-            :label="t('settingsPage.provider')"
-            outlined
-            emit-value
-            map-options
-          />
-          <q-input
-            v-model="llmModel"
-            :label="t('settingsPage.model')"
-            outlined
-            :hint="t('settingsPage.modelHint')"
-          />
-          <q-input
-            v-model="llmApiKey"
-            :label="t('settingsPage.apiKey')"
-            type="password"
-            outlined
-            :hint="t('settingsPage.apiKeyHint')"
-          />
+      <!-- Server Config -->
+      <q-card class="q-mb-md">
+        <q-card-section>
+          <div class="text-h6">{{ t('settingsPage.systemInfo') }}</div>
+        </q-card-section>
+        <q-card-section>
+          <q-list separator>
+            <q-item>
+              <q-item-section avatar><q-icon name="storage" /></q-item-section>
+              <q-item-section>
+                <q-item-label caption>{{ t('settingsPage.vectorDb') }}</q-item-label>
+                <q-item-label class="text-weight-medium">{{ serverConfig.vectorDbProvider }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </q-list>
         </q-card-section>
       </q-card>
 
-      <!-- Vector DB Configuration -->
-      <q-card class="q-mb-md">
-        <q-card-section>
-          <div class="text-h6">{{ t('settingsPage.vectorDatabase') }}</div>
-          <div class="text-subtitle2 text-grey">{{ t('settingsPage.vectorSubtitle') }}</div>
-        </q-card-section>
-
-        <q-card-section class="q-gutter-md">
-          <q-select
-            v-model="vectorProvider"
-            :options="vectorProviders"
-            :label="t('settingsPage.provider')"
-            outlined
-            emit-value
-            map-options
-          />
-          <q-input
-            v-model="vectorUrl"
-            :label="t('settingsPage.url')"
-            outlined
-            :hint="t('settingsPage.urlHint')"
-          />
-          <q-input
-            v-model="vectorApiKey"
-            :label="t('settingsPage.apiKey')"
-            type="password"
-            outlined
-            :hint="t('settingsPage.apiKeyHint')"
-          />
-        </q-card-section>
-      </q-card>
-
-      <!-- Sync Status -->
-      <q-card class="q-mb-md">
-        <q-card-section>
-          <div class="text-h6">{{ t('settingsPage.cloudSync') }}</div>
-          <div class="text-subtitle2 text-grey">{{ t('settingsPage.cloudSyncSubtitle') }}</div>
-        </q-card-section>
-
-        <q-card-section>
-          <div class="row items-center q-gutter-md">
-            <div v-if="syncStatus">
-              <q-badge :color="syncStatus.status === 'synced' ? 'positive' : 'warning'">
-                {{ syncStatus.status }}
-              </q-badge>
-              <span v-if="syncStatus.last_sync" class="q-ml-sm text-grey">
-                {{ t('settingsPage.lastSync', { value: syncStatus.last_sync }) }}
-              </span>
-            </div>
-            <q-btn color="secondary" :label="t('settingsPage.syncNow')" icon="sync" @click="triggerSync" :loading="syncing" />
-          </div>
-        </q-card-section>
-      </q-card>
-
-      <!-- Save Button -->
-      <div class="row justify-end">
-        <q-btn color="primary" :label="t('settingsPage.saveSettings')" icon="save" size="lg" @click="saveSettings" :loading="saving" />
-      </div>
+      <!-- Change Password Dialog -->
+      <q-dialog v-model="showChangePwd" persistent>
+        <q-card style="width: 380px; max-width: 80vw;">
+          <q-toolbar class="bg-grey-1">
+            <q-toolbar-title>{{ t('settingsPage.changePassword') }}</q-toolbar-title>
+            <q-btn flat round dense icon="close" v-close-popup />
+          </q-toolbar>
+          <q-separator />
+          <q-card-section class="q-gutter-md">
+            <q-input
+              v-model="oldPassword"
+              :label="t('settingsPage.currentPassword')"
+              type="password"
+              outlined
+              dense
+              :rules="[val => !!val || t('login.passwordRequired')]"
+            />
+            <q-input
+              v-model="newPassword"
+              :label="t('settingsPage.newPassword')"
+              type="password"
+              outlined
+              dense
+              :rules="[val => !!val && val.length >= 6 || t('login.passwordMin')]"
+            />
+            <q-input
+              v-model="confirmNewPwd"
+              :label="t('login.confirmPassword')"
+              type="password"
+              outlined
+              dense
+              :rules="[val => val === newPassword || t('login.passwordMismatch')]"
+            />
+          </q-card-section>
+          <q-card-actions align="right">
+            <q-btn flat :label="t('common.cancel')" v-close-popup />
+            <q-btn color="primary" :label="t('common.save')" :loading="changingPwd" @click="handleChangePassword" />
+          </q-card-actions>
+        </q-card>
+      </q-dialog>
     </template>
   </q-page>
 </template>
@@ -103,110 +99,63 @@
 import { ref, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { useI18n } from 'vue-i18n';
-import { SettingsService, type LLMProvider, type VectorDBProvider, type LLMConfigInput, type VectorDBConfigInput } from 'src/services/settings';
-import { SyncService, type SyncStatus } from 'src/services/sync';
+import { AuthService } from 'src/services/auth';
+import { KnowledgeService } from 'src/services/knowledge';
 
 const $q = useQuasar();
 const { t } = useI18n();
 
 const loading = ref(true);
-const saving = ref(false);
-const syncing = ref(false);
+const userEmail = ref('');
+const userRole = ref('User');
+const serverConfig = ref({
+  vectorDbProvider: '...',
+});
 
-// LLM settings
-const llmProvider = ref<LLMProvider>('openai');
-const llmModel = ref('');
-const llmApiKey = ref('');
+// Change password state
+const showChangePwd = ref(false);
+const oldPassword = ref('');
+const newPassword = ref('');
+const confirmNewPwd = ref('');
+const changingPwd = ref(false);
 
-// Vector DB settings
-const vectorProvider = ref<VectorDBProvider>('lancedb');
-const vectorUrl = ref('');
-const vectorApiKey = ref('');
-
-// Sync status
-const syncStatus = ref<SyncStatus | null>(null);
-
-const llmProviders = [
-  { label: 'OpenAI', value: 'openai' },
-  { label: 'Anthropic', value: 'anthropic' },
-  { label: 'Ollama (Local)', value: 'ollama' },
-  { label: 'Google Gemini', value: 'gemini' },
-  { label: 'Mistral', value: 'mistral' },
-];
-
-const vectorProviders = [
-  { label: 'LanceDB (Local)', value: 'lancedb' },
-  { label: 'ChromaDB', value: 'chromadb' },
-  { label: 'PGVector', value: 'pgvector' },
-];
-
-async function loadSettings() {
-  loading.value = true;
+async function loadData() {
   try {
-    const [settings, status] = await Promise.all([
-      SettingsService.getSettings(),
-      SyncService.getStatus().catch(() => null),
+    const [user] = await Promise.all([
+      AuthService.getCurrentUser().catch(() => null),
+      KnowledgeService.getConfig().then(cfg => {
+        serverConfig.value.vectorDbProvider = cfg.vector_db_provider;
+      }).catch(() => {}),
     ]);
-
-    // LLM
-    llmProvider.value = settings.llm.provider;
-    llmModel.value = settings.llm.model || '';
-    // Don't load API key for security
-
-    // Vector DB
-    vectorProvider.value = settings.vector_db.provider;
-    vectorUrl.value = settings.vector_db.url || '';
-
-    // Sync
-    syncStatus.value = status;
-  } catch {
-    $q.notify({ color: 'negative', message: t('settingsPage.failedLoadSettings') });
+    if (user) {
+      userEmail.value = user.email;
+      userRole.value = user.is_superuser ? 'Admin' : 'User';
+    }
   } finally {
     loading.value = false;
   }
 }
 
-async function saveSettings() {
-  saving.value = true;
+async function handleChangePassword() {
+  if (!oldPassword.value || !newPassword.value || newPassword.value !== confirmNewPwd.value) return;
+  if (newPassword.value.length < 6) {
+    $q.notify({ type: 'warning', message: t('login.passwordMin') });
+    return;
+  }
+  changingPwd.value = true;
   try {
-    const llmConfig: LLMConfigInput = { provider: llmProvider.value };
-    if (llmModel.value) llmConfig.model = llmModel.value;
-    if (llmApiKey.value) llmConfig.api_key = llmApiKey.value;
-
-    const vectorConfig: VectorDBConfigInput = { provider: vectorProvider.value };
-    if (vectorUrl.value) vectorConfig.url = vectorUrl.value;
-    if (vectorApiKey.value) vectorConfig.api_key = vectorApiKey.value;
-
-    await SettingsService.saveSettings({
-      llm: llmConfig,
-      vector_db: vectorConfig,
-    });
-    $q.notify({ color: 'positive', message: t('settingsPage.saved') });
-    // Clear sensitive fields
-    llmApiKey.value = '';
-    vectorApiKey.value = '';
+    await AuthService.changePassword(oldPassword.value, newPassword.value);
+    $q.notify({ type: 'positive', message: t('settingsPage.passwordChanged') });
+    showChangePwd.value = false;
+    oldPassword.value = '';
+    newPassword.value = '';
+    confirmNewPwd.value = '';
   } catch {
-    $q.notify({ color: 'negative', message: t('settingsPage.failedSave') });
+    $q.notify({ type: 'negative', message: t('settingsPage.passwordChangeFailed') });
   } finally {
-    saving.value = false;
+    changingPwd.value = false;
   }
 }
 
-async function triggerSync() {
-  syncing.value = true;
-  try {
-    const result = await SyncService.sync();
-    $q.notify({ color: 'positive', message: result.message || t('settingsPage.syncStarted') });
-    // Refresh status
-    syncStatus.value = await SyncService.getStatus().catch(() => null);
-  } catch {
-    $q.notify({ color: 'negative', message: t('settingsPage.failedSync') });
-  } finally {
-    syncing.value = false;
-  }
-}
-
-onMounted(() => {
-  void loadSettings();
-});
+onMounted(() => void loadData());
 </script>

@@ -1,19 +1,18 @@
-FROM node:22-alpine AS deps
+FROM oven/bun:1.2-alpine AS deps
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-COPY vendor/ ./vendor/
-RUN npm ci --omit=dev
+COPY package.json bun.lock ./
+COPY src/opencode-router/shims ./src/opencode-router/shims
+RUN bun install --production
 
-FROM node:22-alpine AS build
+FROM oven/bun:1.2-alpine AS build
 
 WORKDIR /app
 
-COPY package.json package-lock.json tsconfig.json ./
+COPY package.json bun.lock tsconfig.json ./
 COPY src/ ./src/
-COPY vendor/ ./vendor/
-RUN npm ci && npm run build
+RUN bun install && bun run build
 
 FROM ghcr.io/anomalyco/opencode:latest
 
@@ -24,9 +23,9 @@ RUN apk add --no-cache tzdata
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY src/opencode-router/workspace-template ./dist/src/opencode-router/workspace-template
 
 COPY package.json bunfig.toml tsconfig.json opencode-router.json docker-entrypoint.sh ./
-COPY vendor/ ./vendor/
 RUN chmod +x /app/docker-entrypoint.sh
 
 ENV NODE_ENV=production \

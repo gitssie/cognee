@@ -1,6 +1,5 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface MemifyPayload {
   data?: string;
@@ -24,7 +23,7 @@ export const MemifyService = {
    * Memify is similar to Cognify but focuses on memory/extraction tasks
    */
   async memify(payload: MemifyPayload): Promise<MemifyResponse> {
-    const response = await axios.post<MemifyResponse>(`${API_BASE}/api/v1/memify`, payload);
+    const response = await axios.post<MemifyResponse>(`/api/v1/memify`, payload);
     return response.data;
   },
 };

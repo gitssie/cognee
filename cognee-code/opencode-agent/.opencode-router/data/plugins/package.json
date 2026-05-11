@@ -1,0 +1,8 @@
+{
+  "name": "opencode-router-plugin-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@wecom/wecom-openclaw-plugin": "^2026.5.7"
+  }
+}

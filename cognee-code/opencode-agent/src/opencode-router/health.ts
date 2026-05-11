@@ -132,6 +132,63 @@ export type SendMessageResult = {
   reason?: string;
 };
 
+// ── Unified identity types (all channels) ────────────────────────────
+
+export type ChannelIdentityItem = {
+  id: string;
+  enabled: boolean;
+  running: boolean;
+  directory?: string;
+  /** Additional per-channel metadata. */
+  meta?: Record<string, unknown>;
+};
+
+export type ChannelIdentitiesResult = {
+  /** Keyed by channel name (telegram, slack, wecom, etc.) */
+  channels: Record<string, { items: ChannelIdentityItem[] }>;
+};
+
+// ── Sandbox management types ──────────────────────────────────────────
+
+export type SandboxRuntimeItem = {
+  identity: string;
+  sandboxName: string;
+  image: string;
+  hostPort: number;
+  guestPort: number;
+  status: string;
+  lastActivityAt: number;
+  createdAt: number;
+};
+
+export type SandboxListResult = {
+  items: SandboxRuntimeItem[];
+};
+
+export type SandboxOperationResult = {
+  identity: string;
+  ok: boolean;
+  error?: string;
+};
+
+// ── Agent config types ───────────────────────────────────────────────
+
+export type AgentConfigResult = {
+  model?: string;
+  prompt?: string;
+  mcp?: Record<string, unknown>;
+  permission?: Record<string, unknown>;
+  agent?: Record<string, unknown>;
+};
+
+export type AgentConfigUpdateInput = {
+  model?: string;
+  prompt?: string;
+  mcp?: Record<string, unknown>;
+  permission?: Record<string, unknown>;
+  agent?: Record<string, unknown>;
+};
+
 export type ExtraRequestHandler = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -141,6 +198,8 @@ export type ExtraRequestHandler = (
 export type HealthHandlers = {
   setGroupsEnabled?: (enabled: boolean) => Promise<GroupsConfigResult>;
   getGroupsEnabled?: () => boolean;
+  /** Returns ALL identities across all channels (telegram, slack, wecom, plugin, etc.) */
+  listAllIdentities?: () => Promise<ChannelIdentitiesResult>;
   listTelegramIdentities?: () => Promise<TelegramIdentitiesResult>;
   upsertTelegramIdentity?: (input: TelegramIdentityUpsertInput) => Promise<UpsertIdentityResult>;
   deleteTelegramIdentity?: (id: string) => Promise<DeleteIdentityResult>;
@@ -151,6 +210,13 @@ export type HealthHandlers = {
   setBinding?: (input: { channel: string; identityId?: string; peerId: string; directory: string }) => Promise<void>;
   clearBinding?: (input: { channel: string; identityId?: string; peerId: string }) => Promise<void>;
   sendMessage?: (input: SendMessageInput) => Promise<SendMessageResult>;
+  // ── Sandbox management ───────────────────────────────────────────
+  listSandboxes?: () => Promise<SandboxListResult>;
+  stopSandbox?: (identity: string) => Promise<SandboxOperationResult>;
+  removeSandbox?: (identity: string) => Promise<SandboxOperationResult>;
+  // ── Agent config ─────────────────────────────────────────────────
+  getAgentConfig?: () => Promise<AgentConfigResult>;
+  updateAgentConfig?: (input: AgentConfigUpdateInput) => Promise<AgentConfigResult>;
   extraRequestHandlers?: ExtraRequestHandler[];
 };
 
@@ -281,6 +347,52 @@ export async function startHealthServer(
           const statusRaw = (error as any)?.status;
           const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // ── GET /identities (unified — all channels) ──────────────────
+      if (pathname === "/identities" && req.method === "GET") {
+        if (!handlers.listAllIdentities) {
+          // Fallback: aggregate from per-channel handlers if available.
+          const result: ChannelIdentitiesResult = { channels: {} };
+          if (handlers.listTelegramIdentities) {
+            try {
+              const t = await handlers.listTelegramIdentities();
+              result.channels["telegram"] = {
+                items: t.items.map((i) => ({
+                  id: i.id,
+                  enabled: i.enabled,
+                  running: i.running,
+                  meta: { access: i.access, pairingRequired: i.pairingRequired },
+                })),
+              };
+            } catch { /* skip */ }
+          }
+          if (handlers.listSlackIdentities) {
+            try {
+              const s = await handlers.listSlackIdentities();
+              result.channels["slack"] = {
+                items: s.items.map((i) => ({
+                  id: i.id,
+                  enabled: i.enabled,
+                  running: i.running,
+                })),
+              };
+            } catch { /* skip */ }
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        }
+        try {
+          const result = await handlers.listAllIdentities();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
@@ -655,6 +767,123 @@ export async function startHealthServer(
           const statusRaw = (error as any)?.status;
           const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // ── GET /sandboxes ────────────────────────────────────────────
+      if (pathname === "/sandboxes" && req.method === "GET") {
+        if (!handlers.listSandboxes) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Sandbox management not supported" }));
+          return;
+        }
+        try {
+          const result = await handlers.listSandboxes();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // ── POST /sandboxes/:id/stop ──────────────────────────────────
+      if (pathname.startsWith("/sandboxes/") && pathname.endsWith("/stop") && req.method === "POST") {
+        if (!handlers.stopSandbox) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Sandbox management not supported" }));
+          return;
+        }
+        const id = pathname.slice("/sandboxes/".length, -"/stop".length).trim();
+        if (!id) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "identity is required" }));
+          return;
+        }
+        try {
+          const result = await handlers.stopSandbox(id);
+          res.writeHead(result.ok ? 200 : 500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // ── DELETE /sandboxes/:id ─────────────────────────────────────
+      if (pathname.startsWith("/sandboxes/") && req.method === "DELETE") {
+        if (!handlers.removeSandbox) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Sandbox management not supported" }));
+          return;
+        }
+        const id = pathname.slice("/sandboxes/".length).trim();
+        if (!id) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "identity is required" }));
+          return;
+        }
+        try {
+          const result = await handlers.removeSandbox(id);
+          res.writeHead(result.ok ? 200 : 500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // ── GET /config/agent ─────────────────────────────────────────
+      if (pathname === "/config/agent" && req.method === "GET") {
+        if (!handlers.getAgentConfig) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Agent config not supported" }));
+          return;
+        }
+        try {
+          const result = await handlers.getAgentConfig();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // ── PUT /config/agent ─────────────────────────────────────────
+      if (pathname === "/config/agent" && req.method === "PUT") {
+        if (!handlers.updateAgentConfig) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Agent config not supported" }));
+          return;
+        }
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk.toString();
+          if (raw.length > 1024 * 1024) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Payload too large" }));
+            return;
+          }
+        }
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const result = await handlers.updateAgentConfig(payload);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }

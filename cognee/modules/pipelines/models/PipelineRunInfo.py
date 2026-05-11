@@ -43,4 +43,4 @@ class PipelineRunAlreadyCompleted(PipelineRunInfo):
 
 class PipelineRunErrored(PipelineRunInfo):
     status: str = "PipelineRunErrored"
-    pass
+    error: Optional[str] = None

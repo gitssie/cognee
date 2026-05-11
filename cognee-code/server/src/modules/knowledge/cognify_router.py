@@ -59,9 +59,21 @@ async def cognify(
 
     from cognee.api.v1.cognify import cognify as cognee_cognify
     from cognee.api.v1.ontologies.ontologies import OntologyService
+    from cognee.infrastructure.databases.vector import get_vectordb_config
 
     try:
         datasets = payload.dataset_ids if payload.dataset_ids else payload.datasets
+
+        # Auto-provision Muninn vaults as public before cognify.
+        # Without this, new Muninn vaults are locked by default and data writes fail.
+        vector_config = get_vectordb_config()
+        if vector_config.vector_db_provider == "muninn":
+            from src.modules.muninn.admin import ensure_vault_public
+            for ds in (datasets or []):
+                ds_id = ds if isinstance(ds, UUID) else ds
+                vault_name = f"dataset-{ds_id}"
+                # Don't block cognify if vault provisioning fails — just log
+                await ensure_vault_public(vault_name)
 
         config_to_use = None
         if payload.ontology_key:

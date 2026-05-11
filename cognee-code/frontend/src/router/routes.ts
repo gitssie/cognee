@@ -8,6 +8,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: () => import('layouts/MainLayout.vue'),
+    meta: { requiresAuth: true },
     children: [
       { path: '', component: () => import('pages/IndexPage.vue') },
       { path: 'knowledge', component: () => import('pages/KnowledgePage.vue') },
@@ -16,7 +17,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'agents', component: () => import('pages/AgentPage.vue') },
       { path: 'search', component: () => import('pages/SearchPage.vue') },
       { path: 'admin', component: () => import('pages/AdminPage.vue') },
-      { path: 'settings', component: () => import('pages/SettingsPage.vue') }
+      { path: 'monitor', component: () => import('pages/AgentMonitorPage.vue') },
+      { path: 'channels', component: () => import('pages/ChannelManagerPage.vue') },
+      { path: 'settings', component: () => import('pages/SettingsPage.vue') },
     ],
   },
 

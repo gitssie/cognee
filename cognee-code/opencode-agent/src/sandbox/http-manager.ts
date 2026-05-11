@@ -16,6 +16,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import { McpSandboxClient } from "./mcp-client";
 import { PortAllocator } from "./port-allocator";
 import { buildSandboxName, initFilesystem } from "./workspace";
@@ -26,6 +27,7 @@ import {
   waitForOpenCodeReady,
 } from "./opencode-client";
 import { buildSandboxEnvironment } from "./env";
+import type { Logger } from "pino";
 import type {
   OpenCodeSandboxManager,
   SandboxConnection,
@@ -66,6 +68,7 @@ export interface HttpSandboxManagerConfig {
   cleanupIntervalMs: number;
   /** Provider API secrets forwarded into sandboxes. */
   secrets: ProviderSecret[];
+  logger?: Logger;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -93,6 +96,7 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
   // ── ensureRuntime ────────────────────────────────────────
 
   async ensureRuntime(identity: string): Promise<SandboxConnection> {
+    this.cfg.logger?.info({ identity }, "ensure http sandbox runtime");
     const existing = this.entries.get(identity);
     if (existing) {
       try {
@@ -142,9 +146,36 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
     return result;
   }
 
+  async provisionFiles(
+    identity: string,
+    sourcePaths: string[],
+  ): Promise<Map<string, string>> {
+    this.cfg.logger?.info({ identity, count: sourcePaths.length }, "provision http sandbox files");
+    const e = this.entries.get(identity);
+    if (!e) throw new Error(`Sandbox not found for: ${identity}`);
+    const mediaDir = "/workspace/.opencode-router/media";
+    await this.mcp.callTool("sandbox_exec", {
+      name: e.runtime.sandboxName,
+      cmd: "mkdir",
+      args: ["-p", mediaDir],
+    });
+    const moved = new Map<string, string>();
+    for (const src of sourcePaths) {
+      const dst = `${mediaDir}/${basename(src)}`;
+      await this.mcp.callTool("sandbox_exec", {
+        name: e.runtime.sandboxName,
+        cmd: "cp",
+        args: [src, dst],
+      });
+      moved.set(src, dst);
+    }
+    return moved;
+  }
+
   // ── stopRuntime ──────────────────────────────────────────
 
   async stopRuntime(identity: string, _reason: "idle" | "manual"): Promise<void> {
+    this.cfg.logger?.info({ identity, reason: _reason }, "stop http sandbox runtime");
     const e = this.entries.get(identity);
     if (!e) return;
 
@@ -161,6 +192,7 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
   // ── removeRuntime ────────────────────────────────────────
 
   async removeRuntime(identity: string): Promise<void> {
+    this.cfg.logger?.info({ identity }, "remove http sandbox runtime");
     const e = this.entries.get(identity);
     if (!e) return;
 
@@ -208,9 +240,9 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
 
   startCleanupLoop(): () => void {
     const timer = setInterval(() => {
-      void this.cleanupIdleRuntimes().catch((err) =>
-        console.warn("[sandbox-mcp] cleanup failed", err),
-      );
+      void this.cleanupIdleRuntimes().catch((err) => {
+        this.cfg.logger?.warn({ err }, "http sandbox cleanup failed");
+      });
     }, this.cfg.cleanupIntervalMs);
     timer.unref?.();
     return () => clearInterval(timer);
@@ -219,6 +251,7 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
   // ── shutdown ─────────────────────────────────────────────
 
   async shutdown(): Promise<void> {
+    this.cfg.logger?.info({ count: this.entries.size }, "shutdown http sandbox manager");
     for (const e of this.entries.values()) {
       try {
         await this.mcp.callTool("sandbox_stop", {
@@ -236,6 +269,7 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
   // ═════════════════════════════════════════════════════════
 
   private async _create(identity: string): Promise<SandboxConnection> {
+    this.cfg.logger?.info({ identity }, "create http sandbox");
     // Release old resources
     const old = this.entries.get(identity);
     if (old) {
@@ -283,7 +317,6 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
         hostPort,
           guestPort: OPENCODE_GUEST_PORT,
         policy: "allowAll",
-        dns: ["114.114.114.114", "8.8.8.8", "1.1.1.1"],
       },
       entrypoint: [
         "sh",
@@ -347,6 +380,7 @@ export class HttpSandboxManager implements OpenCodeSandboxManager {
     r.lastActivityAt = Date.now();
     return {
       sandboxName: r.sandboxName,
+      sandboxId: r.sandboxName,
       baseUrl: `http://127.0.0.1:${r.hostPort}`,
       hostPort: r.hostPort,
       client: createOpencodeServerClient(r.hostPort, r.serverPassword),

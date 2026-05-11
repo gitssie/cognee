@@ -7,53 +7,41 @@
     "logDir": "logs",
     "healthHost": "0.0.0.0"
   },
+  "sandbox": {
+    "rootDir": "/home/opencode-agent/.opencode-router/sandboxes",
+    "portStart": 42000,
+    "portEnd": 45999,
+    "image": "ghcr.io/anomalyco/opencode:latest",
+    "cpus": 1,
+    "memoryMb": 1024,
+    "idleTtlMs": 3600000,
+    "maxRuntimeMs": 21600000,
+    "stopTimeoutMs": 30000,
+    "cleanupIntervalMs": 60000,
+    "apiUrl": "http://172.16.17.231:3000",
+    "apiKey": "dummy",
+    "template": "opencode",
+    "timeoutMs": 300000
+  },
   "groupsEnabled": false,
-  "opencodeDirectory": "per-peer://workspaces",
   "plugin": [
     "@wecom/wecom-openclaw-plugin"
   ],
   "opencode": {
-    "hostname": "0.0.0.0",
-    "port": 4096,
-    "timeout": 30000,
+    "$schema": "https://opencode.ai/config.json",
     "mcp": {
       "cognee": {
-        "url": "http://localhost:8000/mcp/",
-        "enabled": true
+        "type": "remote",
+        "url": "http://localhost:8000/mcp/"
       }
     },
-    "cogneeApi": {
-      "baseUrl": "http://localhost:8000",
-      "cookieName": "auth_token"
+    "permission": {
+      "external_directory": "allow"
     },
-    "plugin": [
-      "./src/plugin/index.ts"
-    ],
     "agent": {
-      "name": "cognee-coder",
-      "description": "AI coding assistant with persistent memory backed by the cognee knowledge graph",
-      "model": "deepseek/deepseek-v4-flash",
-      "steps": 50,
-      "temperature": 0.1,
-      "prompt": [
-        "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.",
-        "",
-        "## Knowledge Base Search",
-        "Use the `search` MCP tool to query the knowledge base when you need information",
-        "about the project, coding conventions, or past decisions.",
-        "- search_type: Use GRAPH_COMPLETION for natural language Q&A",
-        "- datasets: Restrict to specific dataset names when provided",
-        "",
-        "## Dataset Constraints",
-        "If the user message contains a '<system-reminder>' block listing available datasets,",
-        "you MUST restrict your `search` MCP tool calls to only those datasets.",
-        "Pass the dataset names as the `datasets` parameter when calling `search`."
-      ],
-      "permission": {
-        "bash": "allow",
-        "edit": "allow",
-        "webfetch": "allow",
-        "question": "allow"
+      "cognee-coder": {
+        "model": "deepseek/deepseek-v4-flash",
+        "prompt": "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.\n\n## Knowledge Base Search\nUse the `search` MCP tool to query the knowledge base when you need information about the project, coding conventions, or past decisions.\n- search_type: Use GRAPH_COMPLETION for natural language Q&A\n- datasets: Restrict to specific dataset names when provided\n\n## Dataset Constraints\nIf the user message contains a '<system-reminder>' block listing available datasets, you MUST restrict your `search` MCP tool calls to only those datasets. Pass the dataset names as the `datasets` parameter when calling `search`."
       }
     }
   },

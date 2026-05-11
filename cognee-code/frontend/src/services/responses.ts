@@ -1,6 +1,5 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export type CogneeModel = 'cognee-v1';
 
@@ -60,7 +59,7 @@ export const ResponsesService = {
    * OpenAI-compatible responses endpoint with function calling support
    */
   async createResponse(request: ResponseRequest): Promise<ResponseBody> {
-    const response = await axios.post<ResponseBody>(`${API_BASE}/api/v1/responses/`, request);
+    const response = await axios.post<ResponseBody>(`/api/v1/responses/`, request);
     return response.data;
   },
 

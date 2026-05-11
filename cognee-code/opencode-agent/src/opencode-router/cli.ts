@@ -20,6 +20,7 @@ import {
 import { BridgeStore } from "./db.js";
 import { createLogger } from "./logger.js";
 import { createClient } from "./opencode.js";
+import { createLocalProvider } from "./local-provider.js";
 import { parseSlackPeerId } from "./slack.js";
 import { truncateText } from "./text.js";
 
@@ -168,7 +169,8 @@ async function runStart(pathOverride?: string, options?: { opencodeUrl?: string 
   if (!process.env.OPENCODE_DIRECTORY) {
     process.env.OPENCODE_DIRECTORY = config.opencodeDirectory;
   }
-  const bridge = await startBridge(config, logger, reporter);
+  const provider = createLocalProvider(config);
+  const bridge = await startBridge(config, logger, { provider }, reporter);
   if (process.stdout.isTTY) {
     reporter.onStatus?.("Commands: opencode-router identities, opencode-router bindings, opencode-router status");
   }
@@ -480,7 +482,7 @@ bindings
     const directory = opts.dir.trim();
     if (!peerId || !directory) outputError("peer and dir are required");
     store.upsertBinding(channelRaw as ChannelName, identityId, peerId, directory);
-    store.deleteSession(channelRaw as ChannelName, identityId, peerId);
+    store.clearSession(channelRaw as ChannelName, identityId, peerId, directory);
     store.close();
     if (useJson) outputJson({ success: true });
     else console.log("Binding saved.");
@@ -501,7 +503,7 @@ bindings
     const identityId = normalizeIdentityId(opts.identity);
     const peerId = opts.peer.trim();
     const ok = store.deleteBinding(channelRaw as ChannelName, identityId, peerId);
-    store.deleteSession(channelRaw as ChannelName, identityId, peerId);
+    store.clearSession(channelRaw as ChannelName, identityId, peerId);
     store.close();
     if (useJson) outputJson({ success: ok });
     else console.log(ok ? "Binding removed." : "Binding not found.");

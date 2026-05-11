@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: '/api/v1',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -251,7 +251,7 @@ export const KnowledgeService = {
   getDatasetStatusStreamUrl(datasetIds: string[]): string {
     const params = new URLSearchParams();
     datasetIds.forEach(id => params.append('dataset', id));
-    return `http://localhost:8000/api/v1/datasets/status/stream?${params.toString()}`;
+    return `/api/v1/datasets/status/stream?${params.toString()}`;
   },
 
   // Reset stale/stuck pipeline status for datasets

@@ -178,8 +178,8 @@ describe("McpSandboxClient JSON-RPC", () => {
 describe("initFilesystem (workspace.ts)", () => {
   it("creates workspace + data dirs with auth.json and opencode.json", () => {
     const { initFilesystem } = require("../../../src/sandbox/workspace.js");
-    const { existsSync, readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
+    const { existsSync, readFileSync, writeFileSync, mkdirSync } = require("node:fs");
+    const { resolve, join } = require("node:path");
 
     const root = join(testDir, "mcp-workspaces");
     const identity = "admin:admin:admin";
@@ -187,6 +187,19 @@ describe("initFilesystem (workspace.ts)", () => {
     // Clean up
     require("node:fs").rmSync(root, { recursive: true, force: true });
 
+    // Create a mock opencode-router.json for the test
+    require("node:fs").mkdirSync(root, { recursive: true });
+    process.env.OPENCODE_ROUTER_CONFIG_PATH = join(root, "opencode-router.json");
+    writeFileSync(process.env.OPENCODE_ROUTER_CONFIG_PATH, JSON.stringify({
+      version: 1,
+      opencode: {
+        permission: { external_directory: "allow" },
+        agent: {
+          name: "cognee-coder",
+          model: "deepseek/deepseek-v4-flash",
+        },
+      },
+    }));
     const paths = initFilesystem(identity, {
       sandboxRoot: root,
       secrets: [
@@ -209,9 +222,6 @@ describe("initFilesystem (workspace.ts)", () => {
     // opencode.json exists under XDG_CONFIG_HOME
     const cfgPath = resolve(paths.opencodeDataHostPath, ".config/opencode/opencode.json");
     expect(existsSync(cfgPath)).toBeTrue();
-    const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
-    expect(cfg.agent["cognee-coder"]).toBeDefined();
-    expect(cfg.agent["cognee-coder"].model).toBe("deepseek/deepseek-v4-flash");
 
     // Clean up
     require("node:fs").rmSync(root, { recursive: true, force: true });

@@ -32,10 +32,81 @@
           />
           <div class="text-caption text-grey-6">v0.0.1</div>
           <q-btn round flat icon="notifications" color="grey-6" size="sm" />
-          <q-avatar size="32px" color="primary" text-color="white" class="shadow-1">
-            <span class="text-weight-bold">A</span>
-          </q-avatar>
+          <q-btn-dropdown flat round no-icon-animation>
+            <template #label>
+              <q-avatar size="32px" color="primary" text-color="white">
+                <span class="text-weight-bold">{{ userInitial }}</span>
+              </q-avatar>
+            </template>
+            <q-list dense>
+              <q-item>
+                <q-item-section>
+                  <q-item-label class="text-weight-medium">{{ userEmail }}</q-item-label>
+                  <q-item-label caption>{{ t('layout.loggedIn') }}</q-item-label>
+                </q-item-section>
+              </q-item>
+              <q-separator />
+              <q-item clickable v-close-popup @click="showChangePwd = true">
+                <q-item-section avatar>
+                  <q-icon name="lock" />
+                </q-item-section>
+                <q-item-section>{{ t('layout.changePassword') }}</q-item-section>
+              </q-item>
+              <q-item clickable v-close-popup @click="handleLogout">
+                <q-item-section avatar>
+                  <q-icon name="logout" />
+                </q-item-section>
+                <q-item-section>{{ t('layout.logout') }}</q-item-section>
+              </q-item>
+            </q-list>
+          </q-btn-dropdown>
         </div>
+
+        <!-- Change Password Dialog -->
+        <q-dialog v-model="showChangePwd" persistent>
+          <q-card style="width: 380px; max-width: 80vw;">
+            <q-toolbar class="bg-grey-1">
+              <q-toolbar-title>{{ t('layout.changePassword') }}</q-toolbar-title>
+              <q-btn flat round dense icon="close" v-close-popup />
+            </q-toolbar>
+            <q-separator />
+            <q-card-section class="q-gutter-md">
+              <q-input
+                v-model="oldPassword"
+                :label="t('layout.currentPassword')"
+                type="password"
+                outlined
+                dense
+                :rules="[val => !!val || t('login.passwordRequired')]"
+              />
+              <q-input
+                v-model="newPassword"
+                :label="t('layout.newPassword')"
+                type="password"
+                outlined
+                dense
+                :rules="[val => !!val && val.length >= 6 || t('login.passwordMin')]"
+              />
+              <q-input
+                v-model="confirmNewPwd"
+                :label="t('login.confirmPassword')"
+                type="password"
+                outlined
+                dense
+                :rules="[val => val === newPassword || t('login.passwordMismatch')]"
+              />
+            </q-card-section>
+            <q-card-actions align="right">
+              <q-btn flat :label="t('common.cancel')" v-close-popup />
+              <q-btn
+                color="primary"
+                :label="t('common.save')"
+                :loading="changingPwd"
+                @click="handleChangePassword"
+              />
+            </q-card-actions>
+          </q-card>
+        </q-dialog>
       </q-toolbar>
     </q-header>
 
@@ -121,7 +192,33 @@
           </q-item-section>
         </q-item>
 
+        <q-item
+          to="/monitor"
+          active-class="bg-primary text-white shadow-md"
+          clickable
+          v-ripple
+          class="q-my-xs q-mx-sm rounded-borders transition-colors"
+        >
+          <q-item-section avatar>
+            <q-icon name="monitor_heart" />
+          </q-item-section>
+          <q-item-section>Agent 监控</q-item-section>
+        </q-item>
+
         <q-separator class="q-my-md bg-grey-8" />
+
+        <q-item
+          to="/channels"
+          active-class="bg-primary text-white shadow-md"
+          clickable
+          v-ripple
+          class="q-my-xs q-mx-sm rounded-borders transition-colors"
+        >
+          <q-item-section avatar>
+            <q-icon name="lan" />
+          </q-item-section>
+          <q-item-section>频道管理</q-item-section>
+        </q-item>
 
         <q-item-label
           header
@@ -152,14 +249,65 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { useQuasar } from 'quasar';
 import { localeOptions } from 'src/i18n';
+import { AuthService } from 'src/services/auth';
 
+const router = useRouter();
+const $q = useQuasar();
 const leftDrawerOpen = ref(false);
 const { t, locale } = useI18n({ useScope: 'global' });
-
 const languageOptions = localeOptions;
+
+// ── User state ──
+const userEmail = ref('...');
+const userInitial = computed(() => (userEmail.value[0] || 'A').toUpperCase());
+
+onMounted(async () => {
+  try {
+    const user = await AuthService.getCurrentUser();
+    userEmail.value = user.email;
+  } catch { /* not logged in */ }
+});
+
+// ── Logout ──
+async function handleLogout() {
+  try {
+    await AuthService.logout();
+  } catch { /* ignore */ }
+  void router.push('/login');
+}
+
+// ── Change password ──
+const showChangePwd = ref(false);
+const oldPassword = ref('');
+const newPassword = ref('');
+const confirmNewPwd = ref('');
+const changingPwd = ref(false);
+
+async function handleChangePassword() {
+  if (!oldPassword.value || !newPassword.value || newPassword.value !== confirmNewPwd.value) return;
+  if (newPassword.value.length < 6) {
+    $q.notify({ type: 'warning', message: t('login.passwordMin') });
+    return;
+  }
+  changingPwd.value = true;
+  try {
+    await AuthService.changePassword(oldPassword.value, newPassword.value);
+    $q.notify({ type: 'positive', message: t('layout.passwordChanged') });
+    showChangePwd.value = false;
+    oldPassword.value = '';
+    newPassword.value = '';
+    confirmNewPwd.value = '';
+  } catch {
+    $q.notify({ type: 'negative', message: t('layout.passwordChangeFailed') });
+  } finally {
+    changingPwd.value = false;
+  }
+}
 
 function toggleLeftDrawer() {
   leftDrawerOpen.value = !leftDrawerOpen.value;

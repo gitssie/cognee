@@ -166,6 +166,7 @@ async def run_tasks_distributed(
         yield PipelineRunErrored(
             pipeline_run_id=pipeline_run_id,
             payload=repr(error),
+            error=str(error),
             dataset_id=dataset.id,
             dataset_name=dataset.name,
             data_ingestion_info=locals().get("results"),

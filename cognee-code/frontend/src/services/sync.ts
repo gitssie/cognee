@@ -1,6 +1,5 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface SyncRequest {
   dataset_ids?: string[];
@@ -33,7 +32,7 @@ export const SyncService = {
     if (datasetIds && datasetIds.length > 0) {
       payload.dataset_ids = datasetIds;
     }
-    const response = await axios.post<SyncResponse>(`${API_BASE}/api/v1/sync`, payload);
+    const response = await axios.post<SyncResponse>(`/api/v1/sync`, payload);
     return response.data;
   },
 
@@ -41,7 +40,7 @@ export const SyncService = {
    * Get sync status overview
    */
   async getStatus(): Promise<SyncStatus> {
-    const response = await axios.get<SyncStatus>(`${API_BASE}/api/v1/sync/status`);
+    const response = await axios.get<SyncStatus>(`/api/v1/sync/status`);
     return response.data;
   },
 };

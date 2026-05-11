@@ -45,12 +45,25 @@ export function parseTelegramPeerId(peerId: string): number | null {
   return parsed;
 }
 
-function invalidTelegramPeerIdError(): Error & { status?: number } {
+export function invalidTelegramPeerIdError(): Error & { status?: number } {
   const error = new Error(
     "Telegram peerId must be a numeric chat_id. Usernames like @name are not valid direct targets.",
   ) as Error & { status?: number };
   error.status = 400;
   return error;
+}
+
+const PAIRING_CODE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+export function normalizeTelegramAccess(value: unknown): "public" | "private" {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return raw === "private" ? "private" : "public";
+}
+
+export function normalizePairingCodeHash(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!PAIRING_CODE_HASH_PATTERN.test(raw)) return "";
+  return raw;
 }
 
 export function createTelegramAdapter(

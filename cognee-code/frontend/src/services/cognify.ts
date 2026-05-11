@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: '/api/v1',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -14,9 +14,9 @@ export interface PipelineRunInfo {
 }
 
 export interface CognifyOptions {
-  chunkSize?: number;
-  chunkOverlapRatio?: number;
-  maxTextLength?: number;
+  chunks_per_batch?: number;
+  custom_prompt?: string;
+  ontology_key?: string;
 }
 
 type CognifyResponse = PipelineRunInfo[] | Record<string, PipelineRunInfo>;
@@ -34,14 +34,10 @@ export const CognifyService = {
     const response = await api.post<CognifyResponse>('/cognify', {
       dataset_ids: [datasetId],
       run_in_background: true,
-      chunk_size: options?.chunkSize,
-      chunk_overlap_ratio: options?.chunkOverlapRatio,
-      max_text_length: options?.maxTextLength,
+      chunks_per_batch: options?.chunks_per_batch,
+      custom_prompt: options?.custom_prompt,
+      ontology_key: options?.ontology_key,
     });
     return normalizeCognifyResponse(response.data);
   },
-
-  getSseUrl(pipelineRunId: string): string {
-    return `http://localhost:8000/api/v1/cognify/stream/${pipelineRunId}`;
-  }
 };

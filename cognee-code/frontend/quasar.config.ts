@@ -103,6 +103,11 @@ export default defineConfig((/* ctx */) => {
           target: 'http://localhost:4097',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/opencode/, ''),
+        },
+        '/agent-api': {
+          target: 'http://localhost:3005',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/agent-api/, ''),
         }
       }
     },

@@ -1,0 +1,1 @@
+MuninnDB integration smoke test document.

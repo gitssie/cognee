@@ -1,6 +1,3 @@
-import axios from 'axios';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export type LLMProvider = 'openai' | 'ollama' | 'anthropic' | 'gemini' | 'mistral';
 export type VectorDBProvider = 'lancedb' | 'chromadb' | 'pgvector';
@@ -39,14 +36,23 @@ export interface SettingsPayload {
   vector_db?: VectorDBConfigInput;
 }
 
+/**
+ * Settings service.
+ *
+ * Current backend only exposes /api/v1/config (vector_db_provider).
+ * LLM and other settings are not configurable via API yet.
+ */
 export const SettingsService = {
-  async getSettings(): Promise<SystemSettings> {
-    const response = await axios.get<SystemSettings>(`${API_BASE}/api/v1/settings`);
-    return response.data;
+  getSettings(): SystemSettings {
+    // Placeholder: backend /api/v1/settings does not exist yet
+    return {
+      llm: { provider: 'openai', model: 'unknown' },
+      vector_db: { provider: 'lancedb' },
+    };
   },
 
-  async saveSettings(payload: SettingsPayload): Promise<SystemSettings> {
-    const response = await axios.post<SystemSettings>(`${API_BASE}/api/v1/settings`, payload);
-    return response.data;
+  saveSettings(payload: SettingsPayload): never {
+    void payload;
+    throw new Error('Settings save not yet implemented');
   },
 };

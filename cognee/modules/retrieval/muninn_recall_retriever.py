@@ -49,5 +49,12 @@ class MuninnRecallRetriever(BaseRetriever):
         self, query: str, retrieved_objects: Any, context: Any
     ) -> Union[List[str], List[dict]]:
         if retrieved_objects:
-            return [found_item.payload for found_item in retrieved_objects]
+            return [
+                {
+                    "id": str(found_item.id),
+                    "score": getattr(found_item, "score", None),
+                    **found_item.payload,
+                }
+                for found_item in retrieved_objects
+            ]
         return []

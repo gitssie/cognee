@@ -11,6 +11,7 @@ type SessionRow = {
   peer_id: string;
   session_id: string;
   directory?: string | null;
+  sandbox_id?: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -30,6 +31,18 @@ type AllowlistRow = {
   created_at: number;
 };
 
+type SandboxRow = {
+  channel: ChannelName;
+  identity_id: string;
+  peer_id: string;
+  sandbox_id: string;
+  status: string;
+  host_workspace_path: string;
+  host_data_path: string;
+  created_at: number;
+  updated_at: number;
+};
+
 export class BridgeStore {
   private db: Database;
 
@@ -44,6 +57,7 @@ export class BridgeStore {
         peer_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         directory TEXT,
+        sandbox_id TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (channel, identity_id, peer_id)
@@ -67,69 +81,28 @@ export class BridgeStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS sandboxes (
+        channel TEXT NOT NULL,
+        identity_id TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        sandbox_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'unknown',
+        host_workspace_path TEXT NOT NULL DEFAULT '',
+        host_data_path TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (channel, identity_id, peer_id)
+      );
     `);
-
-    this.migrate();
-  }
-
-  private migrate() {
-    // Sessions: migrate from legacy (channel, peer_id) PK to identity-scoped PK.
-    const sessionColumns = this.db
-      .prepare("PRAGMA table_info(sessions)")
-      .all() as Array<{ name?: string }>;
-    const hasSessionIdentity = sessionColumns.some((column) => column.name === "identity_id");
-    if (!hasSessionIdentity) {
+    // One-time migration: backfill sandbox_id from sessions into sandboxes table
+    const sandboxCount = (this.db.prepare("SELECT COUNT(*) AS cnt FROM sandboxes").get() as { cnt: number }).cnt;
+    if (sandboxCount === 0) {
       this.db.exec(`
-        CREATE TABLE IF NOT EXISTS sessions_v2 (
-          channel TEXT NOT NULL,
-          identity_id TEXT NOT NULL,
-          peer_id TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          directory TEXT,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY (channel, identity_id, peer_id)
-        );
+        INSERT OR IGNORE INTO sandboxes (channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at)
+        SELECT channel, identity_id, peer_id, sandbox_id, 'unknown', '', '', created_at, updated_at
+        FROM sessions
+        WHERE sandbox_id IS NOT NULL AND sandbox_id != ''
       `);
-      // Copy existing rows, defaulting identity_id to "default".
-      this.db.exec(`
-        INSERT OR IGNORE INTO sessions_v2 (channel, identity_id, peer_id, session_id, directory, created_at, updated_at)
-        SELECT channel, 'default', peer_id, session_id, NULL, created_at, updated_at FROM sessions;
-      `);
-      this.db.exec("DROP TABLE sessions");
-      this.db.exec("ALTER TABLE sessions_v2 RENAME TO sessions");
-    }
-
-    // Bindings: migrate from legacy (channel, peer_id) PK to identity-scoped PK.
-    const bindingColumns = this.db
-      .prepare("PRAGMA table_info(bindings)")
-      .all() as Array<{ name?: string }>;
-    const hasBindingIdentity = bindingColumns.some((column) => column.name === "identity_id");
-    if (!hasBindingIdentity) {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS bindings_v2 (
-          channel TEXT NOT NULL,
-          identity_id TEXT NOT NULL,
-          peer_id TEXT NOT NULL,
-          directory TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY (channel, identity_id, peer_id)
-        );
-      `);
-      this.db.exec(`
-        INSERT OR IGNORE INTO bindings_v2 (channel, identity_id, peer_id, directory, created_at, updated_at)
-        SELECT channel, 'default', peer_id, directory, created_at, updated_at FROM bindings;
-      `);
-      this.db.exec("DROP TABLE bindings");
-      this.db.exec("ALTER TABLE bindings_v2 RENAME TO bindings");
-    }
-
-    // Cleanup: WhatsApp pairing table is no longer used.
-    try {
-      this.db.exec("DROP TABLE IF EXISTS pairing_requests");
-    } catch {
-      // ignore
     }
   }
 
@@ -140,20 +113,31 @@ export class BridgeStore {
 
   getSession(channel: ChannelName, identityId: string, peerId: string): SessionRow | null {
     const stmt = this.db.prepare(
-      "SELECT channel, identity_id, peer_id, session_id, directory, created_at, updated_at FROM sessions WHERE channel = ? AND identity_id = ? AND peer_id = ?",
+      "SELECT channel, identity_id, peer_id, session_id, directory, sandbox_id, created_at, updated_at FROM sessions WHERE channel = ? AND identity_id = ? AND peer_id = ?",
     );
     const row = stmt.get(channel, identityId, peerId) as SessionRow | null;
     return row ?? null;
   }
 
-  upsertSession(channel: ChannelName, identityId: string, peerId: string, sessionId: string, directory?: string | null) {
+  upsertSession(channel: ChannelName, identityId: string, peerId: string, sessionId: string, directory?: string | null, sandboxId?: string | null) {
     const now = Date.now();
     const stmt = this.db.prepare(
-      `INSERT INTO sessions (channel, identity_id, peer_id, session_id, directory, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET session_id = excluded.session_id, directory = excluded.directory, updated_at = excluded.updated_at`,
+      `INSERT INTO sessions (channel, identity_id, peer_id, session_id, directory, sandbox_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET session_id = excluded.session_id, directory = excluded.directory, sandbox_id = excluded.sandbox_id, updated_at = excluded.updated_at`,
     );
-    stmt.run(channel, identityId, peerId, sessionId, directory ?? null, now, now);
+    stmt.run(channel, identityId, peerId, sessionId, directory ?? null, sandboxId ?? null, now, now);
+  }
+
+  clearSession(channel: ChannelName, identityId: string, peerId: string, directory?: string | null): boolean {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      `UPDATE sessions
+       SET session_id = '', directory = COALESCE(?, directory), updated_at = ?
+       WHERE channel = ? AND identity_id = ? AND peer_id = ?`,
+    );
+    const result = stmt.run(directory ?? null, now, channel, identityId, peerId);
+    return result.changes > 0;
   }
 
   deleteSession(channel: ChannelName, identityId: string, peerId: string): boolean {
@@ -252,6 +236,37 @@ export class BridgeStore {
       "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     );
     stmt.run(key, value);
+  }
+
+  getSandbox(channel: ChannelName, identityId: string, peerId: string): SandboxRow | null {
+    const stmt = this.db.prepare(
+      "SELECT channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at FROM sandboxes WHERE channel = ? AND identity_id = ? AND peer_id = ?",
+    );
+    const row = stmt.get(channel, identityId, peerId) as SandboxRow | null;
+    return row ?? null;
+  }
+
+  upsertSandbox(channel: ChannelName, identityId: string, peerId: string, sandboxId: string, status: string, hostWorkspacePath: string, hostDataPath: string) {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      `INSERT INTO sandboxes (channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, status = excluded.status, host_workspace_path = excluded.host_workspace_path, host_data_path = excluded.host_data_path, updated_at = excluded.updated_at`,
+    );
+    stmt.run(channel, identityId, peerId, sandboxId, status, hostWorkspacePath, hostDataPath, now, now);
+  }
+
+  deleteSandbox(channel: ChannelName, identityId: string, peerId: string): boolean {
+    const stmt = this.db.prepare("DELETE FROM sandboxes WHERE channel = ? AND identity_id = ? AND peer_id = ?");
+    const result = stmt.run(channel, identityId, peerId);
+    return result.changes > 0;
+  }
+
+  listSandboxes(): SandboxRow[] {
+    const stmt = this.db.prepare(
+      "SELECT channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at FROM sandboxes ORDER BY updated_at DESC",
+    );
+    return stmt.all() as SandboxRow[];
   }
 
   close() {

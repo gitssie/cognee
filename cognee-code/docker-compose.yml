@@ -1,0 +1,106 @@
+# =============================================================================
+# Cognee-Code 统一部署 (docker compose)
+#
+# 四个服务:
+#   muninn         — MuninnDB-FAISS 向量数据库 (cognee 存储后端)
+#   server         — FastAPI + cognee 核心引擎 + MCP (/mcp/)
+#   opencode-agent — Bun + microsandbox (per-user VM 隔离)
+#   frontend       — Quasar SPA (nginx 静态 + 反向代理)
+#
+# MCP 连线:
+#   opencode-agent → opencode.json → mcp.cognee.url → http://localhost:8000/mcp/
+#   server 暴露 FastMCP Streamable HTTP 在 /mcp/
+#
+# 存储连线:
+#   server → VECTOR_DB_URL=http://muninn:8476  (compose DNS)
+#
+# 前提:
+#   宿主机 /dev/kvm 可用
+#   msb 已安装: /root/.microsandbox/bin/msb
+#   .env.local 含 DEEPSEEK_API_KEY
+# =============================================================================
+
+services:
+
+  # ── MuninnDB-FAISS (向量数据库) ────────────────────────────────────────
+  muninn:
+    container_name: muninndb
+    image: muninndb-faiss:latest
+    command: --daemon --data /data --listen-host 0.0.0.0
+    restart: unless-stopped
+    environment:
+      - MUNINN_VOYAGE_KEY=pa-fniiHZ3U0x-RBSKAoXTEushJR3g5MWWYesSFGTf-vgJ
+      - MUNINN_SEARCH_BACKEND=bleve
+    ports:
+      - "8474-8477:8474-8477"
+      - "8750:8750"
+    networks:
+      - cognee-net
+    volumes:
+      - ./data/muninn:/data
+
+  # ── Cognee Backend (FastAPI + MCP) ──────────────────────────────────────
+  server:
+    container_name: cognee-server
+    restart: unless-stopped
+    build:
+      context: ..
+      dockerfile: cognee-code/server/Dockerfile
+    env_file:
+      - ./server/.env
+    environment:
+      - HOST=0.0.0.0
+      - COGNEE_SKIP_CONNECTION_TEST=true
+      # 覆盖 .env 中的 localhost → compose DNS 地址
+      - VECTOR_DB_URL=http://muninn:8476
+    ports:
+      - "8000:8000"
+    networks:
+      - cognee-net
+    volumes:
+      - ./data/server:/app/data
+    depends_on:
+      - muninn
+
+  # ── OpenCode Agent (Classic mode — single shared OpenCode server) ──────
+  opencode-agent:
+    container_name: opencode-agent
+    restart: unless-stopped
+    build:
+      context: ./opencode-agent
+      dockerfile: Dockerfile
+    network_mode: host
+    env_file:
+      - ./opencode-agent/.env.local
+    environment:
+      - OPENCODE_HOST=0.0.0.0
+      - OPENCODE_PORT=4096
+      - OPENCODE_ROUTER_CONFIG_PATH=/home/opencode-agent/opencode-router.json
+      - OPENCODE_ROUTER_ROOT_DIR=/home/opencode-agent/.opencode-router
+      - OPENCODE_ROUTER_HEALTH_HOST=0.0.0.0
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data/agent:/home/opencode-agent
+    depends_on:
+      - server
+
+  # ── Frontend (Quasar SPA + nginx 反向代理) ─────────────────────────────
+  frontend:
+    container_name: cognee-frontend
+    restart: unless-stopped
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    networks:
+      - cognee-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - server
+      - opencode-agent
+
+networks:
+  cognee-net:
+    driver: bridge

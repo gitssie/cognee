@@ -1,3 +1,18 @@
+"""
+DEPRECATED — Legacy mock knowledge API.
+
+This module was an early exploratory implementation that uses hardcoded
+user IDs and in-memory storage. It is NOT mounted in main.py and is NOT
+maintained. The real knowledge/dataset API is provided by:
+
+  - cognee.api.v1.datasets.routers  (core cognee datasets CRUD)
+  - cognee.api.v1.add.routers       (data ingestion)
+  - src.modules.knowledge.cognify_router  (cognify pipeline)
+
+Keep this file only for historical reference. Remove when the
+replacement APIs are fully verified in production.
+"""
+
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from typing import List, Optional
 from uuid import UUID
@@ -7,8 +22,9 @@ from .services import DatasetService, DataService
 router = APIRouter(prefix="/datasets", tags=["M1 Knowledge"])
 
 
-# Mock Auth Dependency
+# DEPRECATED — Mock auth; real auth uses cognee.modules.users.methods.get_authenticated_user
 def get_current_user():
+    """Return a fixed user ID for the legacy mock API only."""
     return "user_123"
 
 
