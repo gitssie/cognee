@@ -2,7 +2,7 @@
  * Unit tests for ensureWorkspaceFilesEffect — host-mount detection and fallback.
  *
  * Two branches:
- * 1. Host-mount active: sb.files.read("/workspace/AGENTS.md") succeeds → skip writes
+ * 1. Host-mount active: sb.files.read("/home/user/workspace/AGENTS.md") succeeds → skip writes
  * 2. No host-mount: sb.files.read throws → write template files
  *
  * Mocks: @e2b/code-interpreter (controllable files.read), @opencode-ai/sdk/v2 (health).
@@ -17,7 +17,7 @@ import { join } from "node:path";
 // CONTROLLABLE MOCK STATE — shared between tests
 // ═══════════════════════════════════════════════════════════
 
-/** When true, sb.files.read("/workspace/AGENTS.md") resolves (simulating host-mount). */
+/** When true, sb.files.read("/home/user/workspace/AGENTS.md") resolves (simulating host-mount). */
 let filesReadShouldSucceed = false;
 /** How many times sb.files.write() was called. */
 let filesWriteCallCount = 0;
@@ -40,6 +40,7 @@ function buildMockSandbox() {
         filesWriteCallCount++;
         filesWritePaths.push(path);
       },
+      exists: async (_path: string) => filesReadShouldSucceed,
     },
     commands: {
       run: async (_cmd: string, _opts?: any) => ({
@@ -50,6 +51,7 @@ function buildMockSandbox() {
     setTimeout: async (_ms: number) => {},
     kill: async () => {},
     pause: async () => {},
+    isRunning: async () => true,
   };
 }
 
@@ -103,6 +105,10 @@ afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
+const mockConfig = {
+  configFile: { opencode: {} },
+} as any;
+
 function makeConfig(
   overrides: Partial<E2BSandboxManagerConfig> = {},
 ): E2BSandboxManagerConfig {
@@ -113,9 +119,11 @@ function makeConfig(
     idleTtlMs: 60_000,
     maxRuntimeMs: 300_000,
     cleanupIntervalMs: 30_000,
+    opencodePort: 49983,
     hostMountEnabled: true,
     hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     secrets: [],
+    config: mockConfig,
     ...overrides,
   };
 }
@@ -130,22 +138,23 @@ function makeSecret(envName: string, value: string): ProviderSecret {
 
 describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
   test(
-    "skip writes when AGENTS.md exists via files.read (host-mount active)",
+    "skip template writes when files exist (host-mount active), but opencode.json always written",
     async () => {
       filesReadShouldSucceed = true;
       const manager = new E2BSandboxManager(makeConfig());
 
       await manager.ensureRuntime("wecom:default:hostmount-yes");
 
-      // Host-mount active → files.read succeeded → early return, 0 writes
-      expect(filesWriteCallCount).toBe(0);
+      // files.exists returns true → template files skipped, but opencode.json always written
+      expect(filesWriteCallCount).toBe(1);
+      expect(filesWritePaths).toContain("/home/user/.config/opencode/opencode.json");
 
       await manager.shutdown();
     },
   );
 
   test(
-    "write template files when AGENTS.md read throws (no host-mount)",
+    "write template files when files do not exist (no host-mount)",
     async () => {
       filesReadShouldSucceed = false;
       const manager = new E2BSandboxManager(makeConfig());
@@ -154,9 +163,9 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       // 4 files: opencode.json + AGENTS.md + TOOLS.md + MEMORY.md
       expect(filesWriteCallCount).toBe(4);
-      expect(filesWritePaths).toContain("/workspace/AGENTS.md");
-      expect(filesWritePaths).toContain("/workspace/TOOLS.md");
-      expect(filesWritePaths).toContain("/workspace/MEMORY.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/AGENTS.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/TOOLS.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/MEMORY.md");
       expect(filesWritePaths).toContain(
         "/home/user/.config/opencode/opencode.json",
       );
@@ -184,16 +193,16 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
       expect(filesWritePaths).toContain(
         "/home/user/.local/share/opencode/auth.json",
       );
-      expect(filesWritePaths).toContain("/workspace/AGENTS.md");
-      expect(filesWritePaths).toContain("/workspace/TOOLS.md");
-      expect(filesWritePaths).toContain("/workspace/MEMORY.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/AGENTS.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/TOOLS.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/MEMORY.md");
 
       await manager.shutdown();
     },
   );
 
   test(
-    "skip all writes including auth.json when host-mount active despite secrets",
+    "skip template writes when host-mount active despite secrets, but opencode.json + auth.json written",
     async () => {
       filesReadShouldSucceed = true;
       const manager = new E2BSandboxManager(
@@ -206,8 +215,10 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       await manager.ensureRuntime("wecom:default:hostmount-auth-skip");
 
-      // Host-mount active → no writes at all, auth.json skipped too
-      expect(filesWriteCallCount).toBe(0);
+      // files.exists true → templates skipped; auth.json written (has secrets); opencode.json written
+      expect(filesWriteCallCount).toBe(2);
+      expect(filesWritePaths).toContain("/home/user/.local/share/opencode/auth.json");
+      expect(filesWritePaths).toContain("/home/user/.config/opencode/opencode.json");
 
       await manager.shutdown();
     },
@@ -232,7 +243,7 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
       expect(filesWritePaths).not.toContain(
         "/home/user/.local/share/opencode/auth.json",
       );
-      expect(filesWritePaths).toContain("/workspace/AGENTS.md");
+      expect(filesWritePaths).toContain("/home/user/workspace/AGENTS.md");
 
       await manager.shutdown();
     },

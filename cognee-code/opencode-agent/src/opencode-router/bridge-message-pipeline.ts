@@ -16,6 +16,7 @@ import { truncateText } from "./text.js";
 import type { BridgeSessionRuntime } from "./bridge-session.js";
 import type { OpenCodeClientProvider } from "./client-provider.js";
 import type { ChannelRegistry } from "./bridge-channel.js";
+import type { BridgeMessageStream } from "./bridge-message-stream.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ export type BridgeMessagePipelineDeps = {
   provider: OpenCodeClientProvider;
   mediaStore: MediaStore;
   channels: ChannelRegistry;
+  stream: BridgeMessageStream;
   pluginIdentities: Map<
     string,
     Map<string, { id: string; enabled: boolean; directory?: string; fingerprint?: string }>
@@ -70,16 +72,6 @@ export type BridgeMessagePipeline = {
 
 // ─── OpenCode session.prompt helpers ─────────────────────────────────────────
 
-/**
- * Extract plain-text content from a `session.prompt` response.
- * The SDK returns `{ data: { parts: [{type, text}] } }` in responseStyle="fields" mode.
- */
-function extractPromptText(response: unknown): string {
-  const parts = (response as { data?: { parts?: Array<{ type?: string; text?: string }> } } | undefined)
-    ?.data?.parts;
-  return parts?.filter((p) => p.type === "text").map((p) => p.text ?? "").join("") ?? "";
-}
-
 type PromptParams = {
   handle: Awaited<ReturnType<BridgeSessionRuntime["getHandle"]>>;
   sessionID: string;
@@ -93,16 +85,19 @@ type PromptParams = {
 };
 
 /**
- * Send a prompt to OpenCode and return the assistant's reply text.
- * The sessionID is assumed to be valid (verified by ensureSession upstream).
+ * Send a prompt to OpenCode and stream the assistant's reply back to the user.
+ *
+ * Uses `consumeSession` which:
+ *   1. Registers a session listener FIRST (no events missed)
+ *   2. Fires `promptAsync` via onStart
+ *   3. Accumulates delta text, delivers chunks via onChunk, handles idle/error/timeout
  */
-async function promptSync(params: PromptParams): Promise<string> {
-  const { handle, sessionID, promptText, effectiveAgent, effectiveModel, deps, inbound } = params;
-
+async function promptStream(params: PromptParams): Promise<void> {
+  const { handle, sessionID, promptText, effectiveAgent, effectiveModel, deps, inbound, peerKey } = params;
   const log = { channel: inbound.channel, identityId: inbound.identityId };
+  const replyTarget = ((inbound.raw as Record<string, unknown>)?._bridgeReplyTarget as string)?.trim() || inbound.peerId;
 
   // Validate effectiveAgent against the list of known agents (if available).
-  // If the agent is not recognised, drop it rather than sending an unknown name.
   const knownAgents = deps.availableAgents;
   const resolvedAgent =
     effectiveAgent && (!knownAgents || knownAgents.includes(effectiveAgent))
@@ -110,10 +105,10 @@ async function promptSync(params: PromptParams): Promise<string> {
       : undefined;
 
   if (effectiveAgent && resolvedAgent === undefined) {
-    deps.logger.warn({ ...log, requestedAgent: effectiveAgent, knownAgents }, "promptSync: agent not found in available list, omitting agent param");
+    deps.logger.warn({ ...log, requestedAgent: effectiveAgent, knownAgents }, "promptStream: agent not found, omitting agent param");
   }
 
-  deps.logger.info({ ...log, sessionID, agent: resolvedAgent }, "prompt: sending");
+  deps.logger.info({ ...log, sessionID, agent: resolvedAgent }, "prompt: sending (async)");
 
   const payload = {
     sessionID,
@@ -123,11 +118,16 @@ async function promptSync(params: PromptParams): Promise<string> {
   };
 
   const t0 = Date.now();
-  const result = await handle.client.session.prompt(payload);
-  deps.logger.debug({ ...log, sessionID, result: JSON.stringify(result).slice(0, 500) }, "prompt: raw result");
-  const text = extractPromptText(result);
-  deps.logger.info({ ...log, sessionID, textLength: text.length, ms: Date.now() - t0 }, "prompt: done");
-  return text;
+
+  await deps.stream.consumeSession(sessionID, handle, {
+    promptAsync: () => handle.client.session.promptAsync(payload),
+    onText: async (text) => {
+      await deps.sendText(inbound.channel, inbound.identityId, replyTarget, text, { kind: "reply" });
+    },
+    logger: { info: (msg, data) => deps.logger.info({ ...log, sessionID, ...data }, msg) },
+  });
+
+  deps.logger.info({ ...log, sessionID, ms: Date.now() - t0 }, "prompt: stream complete");
 }
 
 // ─── Pipeline stages ──────────────────────────────────────────────────────────
@@ -356,8 +356,9 @@ async function handleInboundSerial(
   const replyTarget = ((inbound.raw as Record<string, unknown>)?._bridgeReplyTarget as string)?.trim() || inbound.peerId;
 
   // Stage 7 — Send the prompt to OpenCode and deliver the reply
+  let handle: Awaited<ReturnType<BridgeSessionRuntime["getHandle"]>> | undefined;
   try {
-    const { sessionID, handle } = await deps.sessionRuntime.ensureSession({
+    const result = await deps.sessionRuntime.ensureSession({
       channel: inbound.channel,
       identityId: inbound.identityId,
       peerId: inbound.peerId,
@@ -365,6 +366,8 @@ async function handleInboundSerial(
       directory: boundDirectory,
       storedSessionId,
     });
+    const { sessionID } = result;
+    handle = result.handle;
     deps.logger.debug(
       { sessionID, channel: inbound.channel, peerId: inbound.peerId, reused: sessionID === storedSessionId },
       "session resolved",
@@ -379,11 +382,8 @@ async function handleInboundSerial(
       ...(attachmentSummary.length ? ["", "Incoming attachments:", ...attachmentSummary] : []),
     ].join("\n");
 
-    const replyText = await promptSync({ handle, sessionID, promptText, effectiveAgent, effectiveModel, inbound, boundDirectory, peerKey, deps });
-
-    deps.logger.debug({ sessionID, textLength: replyText.length }, "prompt complete");
-    const reply = replyText.trim() || "OpenCode completed without a visible text response.";
-    await deps.sendText(inbound.channel, inbound.identityId, replyTarget, reply, { kind: "reply" });
+    await promptStream({ handle, sessionID, promptText, effectiveAgent, effectiveModel, inbound, boundDirectory, peerKey, deps });
+    deps.logger.debug({ sessionID }, "prompt: stream complete");
   } catch (error) {
     const msg = error instanceof Error ? error.message || "" : String(error);
     deps.logger.error(
@@ -403,6 +403,8 @@ async function handleInboundSerial(
       `Error: ${msg.trim() ? msg.slice(0, 150) : "failed to reach OpenCode."}`,
       { kind: "reply" },
     );
+  } finally {
+    await handle?.release().catch(() => {});
   }
 }
 

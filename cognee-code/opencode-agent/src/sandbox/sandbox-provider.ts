@@ -1,13 +1,16 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { OpenCodeClientProvider, ClientHandle, ProviderHealth } from "../opencode-router/client-provider.js";
 import type { OpenCodeSandboxManager } from "./types";
+import type { Logger } from "pino";
 import { sanitize } from "./workspace";
 
 function buildIdentity(channel: string, identityId: string, peerKey: string): string {
   return `${sanitize(channel)}:${sanitize(identityId)}:${sanitize(peerKey)}`;
 }
 
-export function createSandboxClientProvider(manager: OpenCodeSandboxManager): OpenCodeClientProvider {
+export function createSandboxClientProvider(
+  manager: OpenCodeSandboxManager,
+  logger: Logger,
+): OpenCodeClientProvider {
   return {
     kind: "sandbox",
 

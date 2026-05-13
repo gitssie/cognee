@@ -1,138 +1,93 @@
-import type { Logger } from "pino";
-import { Effect } from "effect";
-
+import type { Event } from "@opencode-ai/sdk/v2";
 import type { ClientHandle } from "./client-provider.js";
 
-export type BridgeStreamEvent = Record<string, unknown>;
-export type BridgeStreamListener = (event: BridgeStreamEvent) => void;
+export type BridgeStreamEvent = Event;
+export type BridgeStreamListener = (event: Event) => void;
 
-type StreamHandle = {
-  stop(): void;
-  addListener(sessionID: string, listener: BridgeStreamListener): () => void;
-  dispatch(event: unknown): void;
+export type ConsumeOptions = {
+  promptAsync: () => Promise<unknown>;
+  onText: (text: string) => Promise<void>;
+  logger?: { info: (msg: string, data?: Record<string, unknown>) => void };
 };
 
-export type BridgeMessageStream = StreamHandle & {
-  start(input: {
-    key: string;
-    handle: ClientHandle;
-    signal?: AbortSignal;
-    context?: Record<string, unknown>;
-  }): void;
+export type ConsumeOutcome =
+  | { status: "done"; text: string }
+  | { status: "error"; error: string; text: string };
+
+export type BridgeMessageStream = {
+  addListener(sessionID: string, handle: ClientHandle, listener: BridgeStreamListener): () => void;
+  consumeSession(
+    sessionID: string,
+    handle: ClientHandle,
+    options: ConsumeOptions,
+  ): Promise<unknown>;
 };
 
-export type BridgeMessageStreamDeps = {
-  logger: Logger;
-};
+export function createBridgeMessageStream(): BridgeMessageStream {
+  const sessions = new Map<string, () => void>(); // sessionID → unsub
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
+  function ensureSession(sessionID: string, handle: ClientHandle, options: ConsumeOptions): void {
+    if (sessions.has(sessionID)) return;
 
-function extractSessionID(event: unknown): string | undefined {
-  const eventObj = asRecord(event);
-  const properties = asRecord(eventObj?.properties);
-  const part = asRecord(properties?.part);
-  const sessionID = properties?.sessionID ?? part?.sessionID;
-  return typeof sessionID === "string" && sessionID.trim()
-    ? sessionID
-    : undefined;
-}
+    const log = options.logger;
+    log?.info("[stream] ensureSession: registering listener", { sessionID });
 
-function toStreamEvent(event: unknown): BridgeStreamEvent | undefined {
-  const eventObj = asRecord(event);
-  return eventObj ? eventObj : undefined;
-}
+    const textByMessage = new Map<string, string[]>();
 
-export function createBridgeMessageStream(
-  deps: BridgeMessageStreamDeps,
-): BridgeMessageStream {
-  const listeners = new Map<string, Set<BridgeStreamListener>>();
-  const controllers = new Map<string, AbortController>();
-  const running = new Map<string, Promise<void>>();
-
-  const handle: StreamHandle = {
-    stop() {
-      for (const controller of controllers.values()) controller.abort();
-      controllers.clear();
-      running.clear();
-      listeners.clear();
-    },
-
-    addListener(sessionID, listener) {
-      let sessionListeners = listeners.get(sessionID);
-      if (!sessionListeners) {
-        sessionListeners = new Set();
-        listeners.set(sessionID, sessionListeners);
-      }
-      sessionListeners.add(listener);
-      return () => {
-        sessionListeners.delete(listener);
-        if (sessionListeners.size === 0) listeners.delete(sessionID);
-      };
-    },
-
-    dispatch(event) {
-      const streamEvent = toStreamEvent(event);
-      if (!streamEvent) return;
-      const sessionID = extractSessionID(streamEvent);
-      const targets = sessionID
-        ? [[sessionID, listeners.get(sessionID)] as const]
-        : Array.from(listeners.entries());
-      for (const [targetSessionID, targetListeners] of targets) {
-        if (!targetListeners) continue;
-        for (const listener of targetListeners) {
-          try {
-            listener(streamEvent);
-          } catch (error) {
-            deps.logger.warn(
-              { error, sessionID: targetSessionID },
-              "bridge stream listener failed",
-            );
-          }
+    const unsub = handle.sseListener.addListener(sessionID, (event) => {
+      if (event.type === "message.part.updated") {
+        const part = event.properties.part;
+        if (part.type === "text" && typeof part.text === "string") {
+          const chunks = textByMessage.get(part.messageID);
+          if (chunks) chunks.push(part.text);
+          else textByMessage.set(part.messageID, [part.text]);
         }
+        return;
       }
+
+      if (event.type === "message.updated") {
+        const info = event.properties.info;
+        if (info.role === "assistant" && info.finish && info.finish !== "tool-calls") {
+          const text = (textByMessage.get(info.id) ?? []).join("\n");
+          textByMessage.delete(info.id);
+          log?.info("[stream] message.updated: assistant finish", { sessionID, messageID: info.id, textLen: text.length, finish: info.finish });
+          if (text) options.onText(text).catch(() => {});
+        }
+        return;
+      }
+
+      if (event.type === "session.error") {
+        const err = event.properties.error;
+        const errMsg = (err && typeof err === "object" && "data" in err)
+          ? String((err as { data: { message?: string } }).data?.message ?? "session error")
+          : "session error";
+        log?.info("[stream] session.error: cleaning up", { sessionID, errMsg });
+        sessions.delete(sessionID);
+        unsub();
+        options.onText(`Error: ${errMsg}`).catch(() => {});
+        return;
+      }
+
+      if (event.type === "session.idle") {
+        log?.info("[stream] session.idle: cleaning up", { sessionID });
+        sessions.delete(sessionID);
+        unsub();
+      }
+    });
+
+    sessions.set(sessionID, unsub);
+    log?.info("[stream] ensureSession: listener registered", { sessionID });
+  }
+
+  return {
+    addListener(sessionID, handle, listener) {
+      return handle.sseListener.addListener(sessionID, listener);
+    },
+
+    consumeSession(sessionID, handle, options) {
+      if (sessions.has(sessionID)) return options.promptAsync();
+      ensureSession(sessionID, handle, options);
+      return options.promptAsync();
     },
   };
-
-  const stream: BridgeMessageStream = {
-    ...handle,
-
-    start(input) {
-      if (running.has(input.key)) return;
-      const controller = new AbortController();
-      controllers.set(input.key, controller);
-      input.signal?.addEventListener("abort", () => controller.abort(), {
-        once: true,
-      });
-      running.set(
-        input.key,
-        Effect.runPromise(
-          Effect.tryPromise(async () => {
-            const events = await input.handle.client.global.event();
-            deps.logger.info(input.context, "bridge stream connected");
-            for await (const event of events.stream) {
-              if (controller.signal.aborted) break;
-              handle.dispatch(event);
-            }
-          }),
-        )
-          .catch((error) => {
-            if (!controller.signal.aborted)
-              deps.logger.warn(
-                { error, ...input.context },
-                "bridge stream failed",
-              );
-          })
-          .finally(() => {
-            controllers.delete(input.key);
-            running.delete(input.key);
-          }),
-      );
-    },
-  };
-
-  return stream;
 }

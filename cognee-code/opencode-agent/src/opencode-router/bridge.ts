@@ -23,6 +23,7 @@ import { BridgeMediaFlow } from "./bridge-media.js";
 import { createBridgePluginGateway } from "./bridge-plugin-gateway.js";
 import { createBridgeAdminHandlers } from "./bridge-admin-handlers.js";
 import { formatInputSummary } from "./text.js";
+import { createBridgeMessageStream } from "./bridge-message-stream.js";
 
 type OutboundKind = "reply" | "system" | "tool";
 
@@ -334,6 +335,8 @@ export async function startBridge(
         return commandRouter.route({ channel, identityId, peerKey, peerId, text });
     }
 
+    const messageStream = createBridgeMessageStream();
+
     const messagePipeline = createBridgeMessagePipeline({
         logger,
         config,
@@ -342,6 +345,7 @@ export async function startBridge(
         provider,
         mediaStore,
         channels,
+        stream: messageStream,
         pluginIdentities,
         directoryPolicy,
         hasAdapter: (channel, identityId) => adapters.has(adapterKey(channel, identityId)),

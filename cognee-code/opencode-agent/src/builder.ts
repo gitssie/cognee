@@ -132,7 +132,7 @@ export class ServiceBuilder {
         config,
       });
 
-      provider = createSandboxClientProvider(manager);
+      provider = createSandboxClientProvider(manager, logger);
       cleanup.push(() => manager!.shutdown().catch(() => {}));
 
       const stopAdminProxy = startAdminProxy(manager, {

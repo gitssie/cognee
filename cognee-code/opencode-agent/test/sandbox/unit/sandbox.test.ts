@@ -52,7 +52,7 @@ describe("Workspace paths", () => {
   it("resolveWorkspacePaths sanitizes path traversal", () => {
     const root = join(testDir, "sandboxes");
     const safePaths = resolveWorkspacePaths("../evil/user", root);
-    expect(safePaths.workspaceHostPath).toContain("/user");
+    expect(safePaths.workspaceHostPath).toStartWith(root);
     expect(safePaths.workspaceHostPath).not.toContain("..");
   });
 

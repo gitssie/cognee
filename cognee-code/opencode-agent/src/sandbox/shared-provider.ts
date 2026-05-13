@@ -1,44 +1,51 @@
 /**
  * SharedServerProvider — adapts the single-OpenCode-server model to
  * the OpenCodeClientProvider interface.
- *
- * Delegates client creation to the bridge's existing getClient() factory and
- * health checks to the bridge's rootClient.
  */
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { OpenCodeClientProvider, ClientHandle, ProviderHealth } from "../opencode-router/client-provider.js";
+import { SSEListener } from "../sse-listener.js";
 import { mkdir, rename } from "node:fs/promises";
 import { join, basename } from "node:path";
 
-/**
- * Callbacks the bridge provides — the provider is a thin adapter, not
- * a re-implementation of the bridge's client management.
- */
 export interface SharedProviderBridge {
-  /** Resolve an OpenCode client for a given directory. */
   getClient(directory: string): OpencodeClient;
-  /** Check the single server's health. */
   checkHealth(): Promise<ProviderHealth>;
 }
 
 export function createSharedServerProvider(bridge: SharedProviderBridge): OpenCodeClientProvider {
+  // One SSEListener per distinct client (keyed by directory / server URL).
+  // For a shared server all clients hit the same endpoint, so we use a single listener.
+  const listeners = new Map<string, SSEListener>();
+
+  function getListener(client: OpencodeClient, key: string): SSEListener {
+    let l = listeners.get(key);
+    if (!l) {
+      l = new SSEListener({ client });
+      listeners.set(key, l);
+    }
+    return l;
+  }
+
+  function makeHandle(directory: string): ClientHandle {
+    const client = bridge.getClient(directory);
+    return {
+      client,
+      directory,
+      sseListener: getListener(client, directory),
+      release: async () => {},
+    };
+  }
+
   return {
     kind: "local",
 
     async getClientForDirectory(directory: string): Promise<ClientHandle> {
-      return {
-        client: bridge.getClient(directory),
-        directory,
-        release: async () => {},
-      };
+      return makeHandle(directory);
     },
 
     async getClientForSession({ directory }): Promise<ClientHandle> {
-      return {
-        client: bridge.getClient(directory),
-        directory,
-        release: async () => {},
-      };
+      return makeHandle(directory);
     },
 
     async getHealth(): Promise<ProviderHealth> {
@@ -57,6 +64,9 @@ export function createSharedServerProvider(bridge: SharedProviderBridge): OpenCo
       return moved;
     },
 
-    async shutdown(): Promise<void> {},
+    async shutdown(): Promise<void> {
+      for (const l of listeners.values()) l.stop();
+      listeners.clear();
+    },
   };
 }

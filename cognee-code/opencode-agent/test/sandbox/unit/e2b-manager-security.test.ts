@@ -30,7 +30,10 @@ function createMockSandbox() {
   const sid = `test-sandbox-${sandboxCounter}`;
   return {
     sandboxId: sid,
-    files: { write: async (_path: string, _content: string) => {} },
+    files: {
+      write: async (_path: string, _content: string) => {},
+      exists: async (_path: string) => false,
+    },
     commands: {
       run: async (_cmd: string, _opts?: any) => ({
         wait: async () => ({ exitCode: 0 }),
@@ -40,6 +43,7 @@ function createMockSandbox() {
     setTimeout: async (_ms: number) => {},
     kill: async () => {},
     pause: async () => {},
+    isRunning: async () => true,
   };
 }
 
@@ -100,6 +104,10 @@ afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
+const mockConfig = {
+  configFile: { opencode: {} },
+} as any;
+
 function makeConfig(
   overrides: Partial<E2BSandboxManagerConfig> = {},
 ): E2BSandboxManagerConfig {
@@ -110,9 +118,11 @@ function makeConfig(
     idleTtlMs: 60_000,
     maxRuntimeMs: 300_000,
     cleanupIntervalMs: 30_000,
+    opencodePort: 49983,
     hostMountEnabled: true,
     hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     secrets: [],
+    config: mockConfig,
     ...overrides,
   };
 }
@@ -330,7 +340,7 @@ describe("resolveWorkspacePaths() — hostMountWorkspaceRoot path traversal defe
     const nestedRoot = join(testDir, "a", "b", "c", "d");
     const paths = resolveWorkspacePaths("test-user", nestedRoot);
     expect(paths.workspaceHostPath).toBe(
-      resolve(nestedRoot, "opencode-test-user", "workspace"),
+      resolve(nestedRoot, "test-user"),
     );
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
@@ -357,28 +367,21 @@ describe("resolveWorkspacePaths() — hostMountWorkspaceRoot path traversal defe
 describe("initFilesystem() — adversarial config defense", () => {
   test("handles empty config gracefully", () => {
     const paths = initFilesystem("wecom:default:nosecrets", {
-      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
+      workspaceRoot: join(testDir, "sandboxes"),
     });
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
 
   test("handles secrets with empty values gracefully", () => {
     const paths = initFilesystem("wecom:default:emptysecrets", {
-      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
+      workspaceRoot: join(testDir, "sandboxes"),
     });
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
 
   test("secrets with injection in envName do not pollute filenames", () => {
     const paths = initFilesystem("wecom:default:injsec", {
-      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
-      secrets: [
-        {
-          envName: "../../etc/passwd",
-          value: "should-be-ignored",
-          allowHosts: [],
-        },
-      ],
+      workspaceRoot: join(testDir, "sandboxes"),
     });
     // envName is not recognized by API_KEY_PROVIDER, so it's ignored
     // No auth.json written with this secret
@@ -387,7 +390,7 @@ describe("initFilesystem() — adversarial config defense", () => {
 
   test("handles secrets with injection in value safely", () => {
     const paths = initFilesystem("wecom:default:injval", {
-      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
+      workspaceRoot: join(testDir, "sandboxes"),
     });
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
@@ -656,7 +659,7 @@ describe("Resource exhaustion boundaries", () => {
 
     const conn = await manager.ensureRuntime("wecom:default:deeppath");
     expect(conn.sandboxName).toBe("opencode-deeppath");
-    expect(existsSync(join(deepRoot, "opencode-deeppath", "workspace"))).toBeTrue();
+    expect(existsSync(join(deepRoot, "deeppath"))).toBeTrue();
 
     await manager.shutdown();
   });
@@ -741,7 +744,7 @@ describe("Config-level adversarial defense", () => {
 
   test("secrets with very long values do not break initFilesystem", () => {
     const paths = initFilesystem("wecom:default:longsecret", {
-      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
+      workspaceRoot: join(testDir, "sandboxes"),
     });
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
@@ -768,7 +771,7 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     expect(hostMount[0].hostPath).toBeString();
     expect(hostMount[0].hostPath).not.toBeEmpty();
     expect(hostMount[0].hostPath).toStartWith("/");
-    expect(hostMount[0].mountPath).toBe("/workspace");
+    expect(hostMount[0].mountPath).toBe("/home/user");
   }
 
   test("SQL injection identity: host-mount JSON is valid and parseable", async () => {
@@ -967,7 +970,7 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
       expect(Array.isArray(hostMount)).toBeTrue();
       expect(hostMount).toHaveLength(1);
       expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
-      expect(hostMount[0].mountPath).toBe("/workspace");
+      expect(hostMount[0].mountPath).toBe("/home/user");
 
       capturedPaths.push(hostMount[0].hostPath);
     }

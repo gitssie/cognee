@@ -28,6 +28,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { Logger } from "pino";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { SSEListener } from "../sse-listener.js";
 import type {
   OpenCodeSandboxManager,
   ProviderSecret,
@@ -146,6 +147,32 @@ class E2BSandboxInstance implements SandboxRuntime {
   private client: OpencodeClient | null = null;
   private baseUrl = "";
   private readonly mutex = Semaphore.makeUnsafe(1);
+
+  // ── SSE listener (single connection, fan-out by sessionID) ───────────────
+  private _sseListener: SSEListener | undefined;
+
+  private getSseListener(): SSEListener {
+    if (!this._sseListener) {
+      if (!this.client) throw new Error("SSEListener: client not ready");
+      const identity = this.identity;
+      const logger = this.logger;
+      this._sseListener = new SSEListener({
+        client: this.client,
+        logger,
+        idleTtlMs: this.cfg.idleTtlMs,
+        onIdle: () => {
+          logger?.info({ identity }, "sandbox idle timeout — stopping");
+          this.stop("idle").catch((err) => logger?.warn({ err, identity }, "stopRuntime(idle) failed"));
+        },
+      });
+    }
+    return this._sseListener;
+  }
+
+  private stopSse(): void {
+    this._sseListener?.stop();
+    this._sseListener = undefined;
+  }
 
   constructor(
     public identity: string,
@@ -273,6 +300,7 @@ class E2BSandboxInstance implements SandboxRuntime {
 
   private clearRuntimeState(dispose: boolean): Effect.Effect<void> {
     return Effect.sync(() => {
+      this.stopSse();
       this.sandbox = null;
       this.client = null;
       this.baseUrl = "";
@@ -314,11 +342,6 @@ class E2BSandboxInstance implements SandboxRuntime {
         template: this.cfg.template,
         apiUrl: this.cfg.apiUrl,
         metadata,
-        hostMountEnabled: this.cfg.hostMountEnabled,
-        workspaceHostPath: this.workspaceHostPath || null,
-        mountPath: E2B_HOME,
-        // NOTE: envs is passed here but the current CubeAPI version does NOT
-        // forward envs into the container.
       },
       "sandbox create params",
     );
@@ -541,7 +564,10 @@ class E2BSandboxInstance implements SandboxRuntime {
       directory: E2B_WORKSPACE,
       baseUrl: this.baseUrl,
       hostPort: 0,
+      idleTtlMs: this.cfg.idleTtlMs,
       client: this.client!,
+      sseListener: this.getSseListener(),
+      events: () => { throw new Error("use sseListener instead of events()"); },
       release: async () => {},
     };
   }

@@ -1,5 +1,6 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { Logger } from "pino";
+import type { SSEListener } from "../sse-listener.js";
 
 export type SandboxStatus = "starting" | "running" | "paused" | "stopped" | "crashed" | "draining";
 
@@ -31,6 +32,12 @@ export interface SandboxConnection {
   directory: string;
   baseUrl: string;
   hostPort: number;
+  /** Idle TTL in milliseconds for this sandbox. */
+  idleTtlMs: number;
+  /** Shared SSE listener (single connection, fan-out by sessionID). */
+  sseListener: SSEListener;
+  /** @deprecated use sseListener */
+  events(): never;
   client: OpencodeClient;
   release: () => Promise<void>;
 }

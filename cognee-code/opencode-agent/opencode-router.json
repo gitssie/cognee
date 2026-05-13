@@ -13,10 +13,10 @@
     "cleanupIntervalMs": 60000,
     "apiUrl": "http://172.16.17.231:3000",
     "apiKey": "dummy",
-    "template": "opencode",
+    "template": "opencode-tools",
     "timeoutMs": 300000,
     "hostMount": {
-      "enabled": false,
+      "enabled": true,
       "workspaceRoot": "workspaces"
     }
   },
@@ -29,7 +29,8 @@
     "mcp": {
       "cognee": {
         "type": "remote",
-        "url": "http://localhost:8000/mcp/"
+        "url": "http://localhost:8000/mcp/",
+        "enabled": false
       }
     },
     "permission": {
