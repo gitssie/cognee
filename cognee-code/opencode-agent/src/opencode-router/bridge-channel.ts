@@ -15,7 +15,6 @@ import {
     normalizeTelegramAccess,
 } from "./telegram.js";
 import { createSlackAdapter } from "./slack.js";
-import type { OpencodeInstance } from "./opencode-instance.js";
 
 export type ChannelSendOptions = { kind?: "reply" | "system" | "tool"; display?: boolean };
 export type ChannelIdentityAccess = { access: "public" | "private"; pairingCodeHash: string };
@@ -25,8 +24,6 @@ export abstract class Channel implements BridgeAdapter {
     abstract readonly name: ChannelName;
     abstract readonly identityId: string;
     abstract readonly maxTextLength: number;
-
-    constructor(protected readonly instance: OpencodeInstance) {}
 
     abstract start(): Promise<void>;
     abstract stop(): Promise<void>;
@@ -66,8 +63,8 @@ export class AdapterChannel extends Channel {
     readonly sendFile?: BridgeAdapter["sendFile"];
     readonly sendTyping?: BridgeAdapter["sendTyping"];
 
-    constructor(instance: OpencodeInstance, protected readonly adapter: BridgeAdapter) {
-        super(instance);
+    constructor(protected readonly adapter: BridgeAdapter) {
+        super();
         this.key = adapter.key;
         this.name = adapter.name;
         this.identityId = adapter.identityId;
@@ -106,7 +103,7 @@ export class TelegramChannel extends AdapterChannel {
     private readonly pairing: TelegramPairingService;
     private readonly identity: Config["telegramBots"][number];
 
-    constructor(instance: OpencodeInstance, deps: TelegramChannelDeps) {
+    constructor(deps: TelegramChannelDeps) {
         const base = createTelegramAdapter(
             deps.identity,
             deps.config,
@@ -114,7 +111,7 @@ export class TelegramChannel extends AdapterChannel {
             deps.handleInbound as any,
             deps.mediaStore,
         );
-        super(instance, { ...base, key: deps.adapterKey("telegram", deps.identity.id) });
+        super({ ...base, key: deps.adapterKey("telegram", deps.identity.id) });
         this.identity = deps.identity;
         this.pairing = new TelegramPairingService({
             store: deps.store,
@@ -160,7 +157,7 @@ export type SlackChannelDeps = {
 export class SlackChannel extends AdapterChannel {
     private readonly identity: Config["slackApps"][number];
 
-    constructor(instance: OpencodeInstance, deps: SlackChannelDeps) {
+    constructor(deps: SlackChannelDeps) {
         const base = createSlackAdapter(
             deps.identity,
             deps.config,
@@ -169,7 +166,7 @@ export class SlackChannel extends AdapterChannel {
             undefined,
             deps.mediaStore,
         );
-        super(instance, { ...base, key: deps.adapterKey("slack", deps.identity.id) });
+        super({ ...base, key: deps.adapterKey("slack", deps.identity.id) });
         this.identity = deps.identity;
     }
 

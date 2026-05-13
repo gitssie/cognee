@@ -113,7 +113,8 @@ function makeConfig(
     idleTtlMs: 60_000,
     maxRuntimeMs: 300_000,
     cleanupIntervalMs: 30_000,
-    sandboxRoot: join(testDir, "sandboxes"),
+    hostMountEnabled: true,
+    hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     secrets: [],
     ...overrides,
   };

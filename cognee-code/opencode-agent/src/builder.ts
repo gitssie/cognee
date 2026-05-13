@@ -2,15 +2,9 @@ import { createOpencode, type Agent } from "@opencode-ai/sdk/v2";
 import { join } from "node:path";
 import type { OpenCodeClientProvider } from "./opencode-router/client-provider";
 
-import {
-  buildOpencodeOptions,
-  buildRouterEnv,
-  buildSandboxConfig,
-  getRouterRuntimePaths,
-  type RouterRuntimePaths,
-} from "./config";
-import { startRouter, type RouterHandle } from "./router";
-import { SandboxManager, HttpSandboxManager, E2BSandboxManager, createSandboxClientProvider } from "./sandbox/index";
+import { loadConfig, type Config } from "./opencode-router/config";
+import { startRouter } from "./router";
+import { E2BSandboxManager, createSandboxClientProvider } from "./sandbox/index";
 import { createLocalProvider } from "./opencode-router/local-provider";
 import type { ProviderSecret } from "./sandbox/types";
 import { makeRuntime } from "./events";
@@ -26,7 +20,7 @@ function toLoopback(url: string): string {
   return u.toString();
 }
 
-function resolveSecrets(): ProviderSecret[] {
+function resolveSecrets(config: Config): ProviderSecret[] {
   const secrets: ProviderSecret[] = [];
   const envs = [
     ["ANTHROPIC_API_KEY", "api.anthropic.com"],
@@ -55,168 +49,111 @@ export interface Service {
 
 export class ServiceBuilder {
   private readonly _mode: "sandbox" | "classic";
-  private readonly _paths: RouterRuntimePaths;
   private _secrets?: ProviderSecret[];
 
-  private constructor(mode: "sandbox" | "classic", paths: RouterRuntimePaths) {
+  private constructor(mode: "sandbox" | "classic") {
     this._mode = mode;
-    this._paths = paths;
   }
 
-  /** Start building a sandbox-mode service (microsandbox per-user isolation). */
-  static sandbox(paths?: RouterRuntimePaths): ServiceBuilder {
-    return new ServiceBuilder("sandbox", paths ?? getRouterRuntimePaths());
+  static sandbox(): ServiceBuilder {
+    return new ServiceBuilder("sandbox");
   }
 
-  /** Start building a classic-mode service (single shared OpenCode server). */
-  static classic(paths?: RouterRuntimePaths): ServiceBuilder {
-    return new ServiceBuilder("classic", paths ?? getRouterRuntimePaths());
+  static classic(): ServiceBuilder {
+    return new ServiceBuilder("classic");
   }
 
-  /** Provide API keys forwarded into sandboxes (sandbox mode only). */
   withSecrets(secrets: ProviderSecret[]): this {
     this._secrets = [...secrets];
     return this;
   }
 
-  /** Build and start the service. Returns a running {@link Service}. */
   async build(): Promise<Service> {
-    return this._build();
+    // Parse config exactly once — all sub-systems receive Config directly.
+    const config = loadConfig(process.env, { requireOpencode: false });
+    return this._build(config);
   }
 
-  private async _build(): Promise<Service> {
+  private async _build(config: Config): Promise<Service> {
     const cleanup: Array<() => Promise<void> | void> = [];
     let provider: OpenCodeClientProvider;
-    const serviceLogPath = join(this._paths.logDir, "service.log");
-    const serviceLogger = createLogger(process.env.LOG_LEVEL?.trim() || "info", {
-      logFile: serviceLogPath,
-    });
+    let manager: E2BSandboxManager | undefined;
+    let agentList: string[] = [];
+
+    // Single unified log file for the entire service (router + sandbox + builder)
+    const logPath = join(config.paths.logDir, "opencode-agent.log");
+    const logger = createLogger(config.logLevel, { logFile: logPath });
 
     if (this._mode === "classic") {
-      console.log("[opencode-agent] Classic mode (single shared OpenCode server)");
-      serviceLogger.info({ mode: "classic" }, "start opencode-agent service");
-      const opencode = await createOpencode(buildOpencodeOptions());
+      logger.info({ mode: "classic" }, "opencode-agent: classic mode");
+
+      const opencode = await createOpencode(config.opencodeServerOptions);
       cleanup.push(() => opencode.server.close());
-      Object.assign(process.env, buildRouterEnv(toLoopback(opencode.server.url), this._paths));
-      provider = createLocalProvider();
+
+      process.env.OPENCODE_URL = toLoopback(opencode.server.url);
+      provider = createLocalProvider(config);
 
       const agents = await opencode.client.app.agents();
+      const agentList = (agents.data ?? []).map((a: Agent) => a.name).filter(Boolean) as string[];
+      const agentNames = agentList.join(", ") || "none";
+      logger.info({ mode: "classic", opencodeUrl: opencode.server.url, agents: agentNames }, "opencode server ready");
+      console.log(`[opencode-agent] Classic mode (single shared OpenCode server)`);
       console.log(`OpenCode server running at ${opencode.server.url}`);
-      console.log(`Available agents: ${(agents.data ?? []).map((a: Agent) => a.name).join(", ") || "none"}`);
+      console.log(`Available agents: ${agentNames}`);
     } else {
-    const secrets = this._secrets ?? resolveSecrets();
-    const config = buildSandboxConfig(this._paths);
+      const { sandbox } = config;
+      const secrets = this._secrets ?? resolveSecrets(config);
 
-    console.log(`[opencode-agent] Sandbox mode (provider: ${config.provider})`);
-    serviceLogger.info({ mode: "sandbox", provider: config.provider }, "start opencode-agent service");
-    if (config.provider === "e2b") {
-      console.log(`[opencode-agent] e2b api url:    ${config.e2bApiUrl || "(cloud)"}`);
-      console.log(`[opencode-agent] e2b template:   ${config.e2bTemplate}`);
-      console.log(`[opencode-agent] e2b timeoutMs:  ${config.e2bTimeoutMs}`);
-      serviceLogger.info(
-        {
-          apiUrl: config.e2bApiUrl || "(cloud)",
-          template: config.e2bTemplate,
-          timeoutMs: config.e2bTimeoutMs,
-        },
-        "e2b sandbox config",
+      logger.info(
+        { mode: "sandbox", provider: "e2b", apiUrl: sandbox.apiUrl || "(cloud)", template: sandbox.template, timeoutMs: sandbox.timeoutMs, secrets: secrets.map(s => s.envName) },
+        "opencode-agent: sandbox mode",
       );
-    } else {
-      console.log(`[opencode-agent] sandbox root:   ${config.sandboxRoot}`);
-      console.log(`[opencode-agent] port range:     ${config.portStart}–${config.portEnd}`);
-      console.log(`[opencode-agent] image:          ${config.opencodeImage}`);
-      serviceLogger.info(
-        {
-          provider: config.provider,
-          sandboxRoot: config.sandboxRoot,
-          portStart: config.portStart,
-          portEnd: config.portEnd,
-          image: config.opencodeImage,
-        },
-        "sandbox config",
-      );
-    }
-    console.log(`[opencode-agent] secrets:        ${secrets.map(s => s.envName).join(", ") || "none"}`);
+      console.log(`[opencode-agent] Sandbox mode (E2B/Cube Sandbox)`);
+      console.log(`[opencode-agent] e2b api url:    ${sandbox.apiUrl || "(cloud)"}`);
+      console.log(`[opencode-agent] e2b template:   ${sandbox.template}`);
+      console.log(`[opencode-agent] e2b timeoutMs:  ${sandbox.timeoutMs}`);
+      console.log(`[opencode-agent] secrets:        ${secrets.map(s => s.envName).join(", ") || "none"}`);
 
-    // Compose effect layers — mirrors opencode bootstrap-runtime Layer.mergeAll pattern.
-    // WorkspaceTemplate depends on EventBus; both are composed into a single runtime.
-    makeRuntime(WorkspaceInitLive as any);
+      makeRuntime(WorkspaceInitLive as any);
 
-    // Select SandboxManager based on deployment mode:
-    // - E2B/Cube:  @e2b/code-interpreter SDK (cloud or self-hosted Cube Sandbox)
-    // - MCP/HTTP:  remote MCP sandbox server (open-code-agent in Docker)
-    // - Local:     microsandbox npm package (requires /dev/kvm on host)
-    const manager = config.provider === "e2b"
-      ? new E2BSandboxManager({
-          apiKey: config.e2bApiKey ?? "dummy",
-          apiUrl: config.e2bApiUrl || undefined,
-          template: config.e2bTemplate ?? "opencode-tools",
-          timeoutMs: config.e2bTimeoutMs ?? config.idleTtlMs,
-          opencodePort: config.e2bOpencodePort,
-          idleTtlMs: config.idleTtlMs,
-           maxRuntimeMs: config.maxRuntimeMs,
-           cleanupIntervalMs: config.cleanupIntervalMs,
-           sandboxRoot: config.sandboxRoot,
-           secrets,
-           logger: serviceLogger.child({ component: "sandbox", provider: "e2b" }),
-         })
-       : config.provider === "http"
-       ? new HttpSandboxManager({
-          mcpUrl: config.mcpUrl!,
-          sandboxRoot: config.sandboxRoot,
-          portStart: config.portStart,
-          portEnd: config.portEnd,
-          idleTtlMs: config.idleTtlMs,
-          maxRuntimeMs: config.maxRuntimeMs,
-          opencodeImage: config.opencodeImage,
-          cpus: config.cpus,
-           memoryMb: config.memoryMb,
-           cleanupIntervalMs: config.cleanupIntervalMs,
-           secrets,
-           logger: serviceLogger.child({ component: "sandbox", provider: "http" }),
-         })
-       : new SandboxManager({
-          sandboxRoot: config.sandboxRoot,
-          portStart: config.portStart,
-          portEnd: config.portEnd,
-          idleTtlMs: config.idleTtlMs,
-          maxRuntimeMs: config.maxRuntimeMs,
-          opencodeImage: config.opencodeImage,
-          cpus: config.cpus,
-           memoryMb: config.memoryMb,
-           cleanupIntervalMs: config.cleanupIntervalMs,
-           secrets,
-           logger: serviceLogger.child({ component: "sandbox", provider: "local" }),
-         });
+      manager = new E2BSandboxManager({
+        apiKey: sandbox.apiKey,
+        apiUrl: sandbox.apiUrl || undefined,
+        template: sandbox.template,
+        timeoutMs: sandbox.timeoutMs,
+        opencodePort: sandbox.opencodePort,
+        idleTtlMs: sandbox.idleTtlMs,
+        maxRuntimeMs: sandbox.maxRuntimeMs,
+        cleanupIntervalMs: sandbox.cleanupIntervalMs,
+        hostMountEnabled: sandbox.hostMountEnabled,
+        hostMountWorkspaceRoot: sandbox.hostMountWorkspaceRoot,
+        secrets,
+        logger: logger.child({ component: "sandbox", provider: "e2b" }),
+        config,
+      });
 
-    provider = createSandboxClientProvider(manager);
-    cleanup.push(() => manager.shutdown().catch(() => {}));
+      provider = createSandboxClientProvider(manager);
+      cleanup.push(() => manager!.shutdown().catch(() => {}));
 
-    // Admin proxy so AgentPage.vue (admin panel) can reach the admin sandbox.
-    // Lazy: the admin sandbox is created on first request, not at startup.
-    const adminHost = process.env.OPENCODE_ADMIN_PROXY_HOST?.trim() || "127.0.0.1";
-    Object.assign(process.env, buildRouterEnv("http://127.0.0.1:4096", this._paths));
+      const stopAdminProxy = startAdminProxy(manager, {
+        port: 4096,
+        host: sandbox.healthHost,
+      });
+      cleanup.push(stopAdminProxy);
 
-    const stopAdminProxy = startAdminProxy(manager, { port: 4096, host: adminHost });
-    cleanup.push(stopAdminProxy);
+      process.env.OPENCODE_URL = "http://127.0.0.1:4096";
     }
 
-    const router = await startRouter(provider, {
-      sandboxManager: config.provider === "e2b" ? (manager as any) : undefined,
-    });
+    const router = await startRouter(provider, { sandboxManager: manager as any, availableAgents: this._mode === "classic" ? agentList : undefined }, config, logger);
 
     console.log(`[opencode-agent] router config: ${router.configPath}`);
-    console.log(`[opencode-agent] router logs:   ${router.logPath}`);
-    console.log(`[opencode-agent] service logs:  ${serviceLogPath}`);
-    serviceLogger.info(
-      { configPath: router.configPath, routerLogPath: router.logPath, serviceLogPath },
-      "opencode-agent service started",
-    );
+    console.log(`[opencode-agent] router logs:   ${logPath}`);
+    logger.info({ configPath: router.configPath, logPath }, "opencode-agent service started");
 
     return {
-      log: { configPath: router.configPath, routerLogPath: router.logPath, serviceLogPath },
+      log: { configPath: router.configPath, routerLogPath: logPath, serviceLogPath: logPath },
       async stop() {
-        serviceLogger.info("stop opencode-agent service");
+        logger.info("opencode-agent service stopping");
         await router.stop().catch(() => {});
         for (const stop of cleanup.reverse()) await stop();
       },

@@ -2,11 +2,11 @@
  * Adversarial security tests for E2BSandboxManager.
  *
  * Attack surfaces tested:
- * - Path traversal in sandboxRoot config
+ * - Path traversal in hostMountWorkspaceRoot config
  * - Oversized identity strings (DoS / resource exhaustion)
  * - Injection patterns in identity (SQL, template, HTML, shell, unicode)
  * - Null/undefined store access
- * - Boundary violations (empty identity, empty sandboxRoot, control chars)
+ * - Boundary violations (empty identity, empty hostMountWorkspaceRoot, control chars)
  *
  * Tests cover both unit-level (sanitize, buildSandboxName, resolveWorkspacePaths)
  * and integration-level (E2BSandboxManager public methods) attack vectors.
@@ -110,7 +110,8 @@ function makeConfig(
     idleTtlMs: 60_000,
     maxRuntimeMs: 300_000,
     cleanupIntervalMs: 30_000,
-    sandboxRoot: join(testDir, "sandboxes"),
+    hostMountEnabled: true,
+    hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     secrets: [],
     ...overrides,
   };
@@ -300,43 +301,32 @@ describe("buildSandboxName() — identity-based traversal defense", () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// SUITE 3: resolveWorkspacePaths() — sandboxRoot path traversal
+// SUITE 3: resolveWorkspacePaths() — hostMountWorkspaceRoot path traversal
 // ═══════════════════════════════════════════════════════════
 
-describe("resolveWorkspacePaths() — sandboxRoot path traversal defense", () => {
-  test("normal sandboxRoot creates paths under the root", () => {
+describe("resolveWorkspacePaths() — hostMountWorkspaceRoot path traversal defense", () => {
+  test("normal hostMountWorkspaceRoot creates paths under the root", () => {
     const root = join(testDir, "sandboxes");
     const paths = resolveWorkspacePaths("wecom:default:alice", root);
     expect(paths.workspaceHostPath).toStartWith(root);
-    expect(paths.opencodeDataHostPath).toStartWith(root);
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
-    expect(existsSync(paths.opencodeDataHostPath)).toBeTrue();
   });
 
-  test("assertWithinRoot rejects path escaping the sandboxRoot via identity", () => {
-    // The identity gets sanitized by buildSandboxName, so "../" cannot escape.
-    // This test verifies the assertion works even if somehow bypassed.
+  test("assertWithinRoot rejects path escaping the hostMountWorkspaceRoot via identity", () => {
     const root = join(testDir, "sandboxes");
     const paths = resolveWorkspacePaths("..", root);
-    // ".." identity → sanitize("..") → "" → buildSandboxName("..") → "opencode-"
-    // So paths should still be under root
     expect(paths.workspaceHostPath).toStartWith(root);
-    expect(paths.opencodeDataHostPath).toStartWith(root);
   });
 
-  test("traversal in sandboxRoot itself is allowed (root is the trust boundary)", () => {
-    // The assertion only checks that paths remain under the configured root.
-    // If root itself points outside, that's a config-level concern.
-    // This test documents the behavior: root IS the trust boundary.
+  test("traversal in hostMountWorkspaceRoot itself is allowed (root is the trust boundary)", () => {
     const externalRoot = "/tmp";
     const paths = resolveWorkspacePaths("wecom:default:test", externalRoot);
     expect(paths.workspaceHostPath).toStartWith(externalRoot);
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
     rmSync(paths.workspaceHostPath, { recursive: true, force: true });
-    rmSync(paths.opencodeDataHostPath, { recursive: true, force: true });
   });
 
-  test("sandboxRoot with deeply nested subdirectory creates paths correctly", () => {
+  test("hostMountWorkspaceRoot with deeply nested subdirectory creates paths correctly", () => {
     const nestedRoot = join(testDir, "a", "b", "c", "d");
     const paths = resolveWorkspacePaths("test-user", nestedRoot);
     expect(paths.workspaceHostPath).toBe(
@@ -345,21 +335,18 @@ describe("resolveWorkspacePaths() — sandboxRoot path traversal defense", () =>
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
 
-  test("sandboxRoot with trailing slash works the same as without", () => {
+  test("hostMountWorkspaceRoot with trailing slash works the same as without", () => {
     const root = join(testDir, "sandboxes");
     const paths1 = resolveWorkspacePaths("user-a", root);
     const paths2 = resolveWorkspacePaths("user-a", root + "/");
     expect(paths1.workspaceHostPath).toBe(paths2.workspaceHostPath);
   });
 
-  test("empty sandboxRoot resolves to CWD-relative paths", () => {
-    // An empty sandboxRoot means resolve("", "opencode-test", "workspace")
-    // resolves relative to CWD. This is not a crash but is a config risk.
+  test("empty hostMountWorkspaceRoot resolves to CWD-relative paths", () => {
     const paths = resolveWorkspacePaths("empty-root-test", "");
     expect(paths.workspaceHostPath).toStartWith(process.cwd());
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
     rmSync(paths.workspaceHostPath, { recursive: true, force: true });
-    rmSync(paths.opencodeDataHostPath, { recursive: true, force: true });
   });
 });
 
@@ -368,30 +355,23 @@ describe("resolveWorkspacePaths() — sandboxRoot path traversal defense", () =>
 // ═══════════════════════════════════════════════════════════
 
 describe("initFilesystem() — adversarial config defense", () => {
-  test("handles empty secrets array gracefully", () => {
+  test("handles empty config gracefully", () => {
     const paths = initFilesystem("wecom:default:nosecrets", {
-      sandboxRoot: join(testDir, "sandboxes"),
-      secrets: [],
+      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     });
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
-    expect(existsSync(paths.opencodeDataHostPath)).toBeTrue();
   });
 
-  test("handles secrets with empty values without writing auth.json", () => {
+  test("handles secrets with empty values gracefully", () => {
     const paths = initFilesystem("wecom:default:emptysecrets", {
-      sandboxRoot: join(testDir, "sandboxes"),
-      secrets: [
-        { envName: "DEEPSEEK_API_KEY", value: "", allowHosts: [] },
-        { envName: "OPENAI_API_KEY", value: "", allowHosts: [] },
-      ],
+      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     });
-    // No auth.json should be written since values are empty
     expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
 
   test("secrets with injection in envName do not pollute filenames", () => {
     const paths = initFilesystem("wecom:default:injsec", {
-      sandboxRoot: join(testDir, "sandboxes"),
+      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
       secrets: [
         {
           envName: "../../etc/passwd",
@@ -407,25 +387,9 @@ describe("initFilesystem() — adversarial config defense", () => {
 
   test("handles secrets with injection in value safely", () => {
     const paths = initFilesystem("wecom:default:injval", {
-      sandboxRoot: join(testDir, "sandboxes"),
-      secrets: [
-        {
-          envName: "DEEPSEEK_API_KEY",
-          value: "'); process.exit(1); //",
-          allowHosts: [],
-        },
-      ],
+      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     });
-    // The value is JSON-serialized, so it should be safely escaped
-    const authJsonPath = join(
-      paths.opencodeDataHostPath,
-      ".local/share/opencode/auth.json",
-    );
-    expect(existsSync(authJsonPath)).toBeTrue();
-    const content = readFileSync(authJsonPath, "utf8");
-    expect(JSON.parse(content)).toEqual({
-      deepseek: { type: "api", key: "'); process.exit(1); //" },
-    });
+    expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
 });
 
@@ -681,13 +645,13 @@ describe("Resource exhaustion boundaries", () => {
     await manager.shutdown();
   });
 
-  test("sandboxRoot exceeding typical path length limits", async () => {
-    // Create a deeply nested sandboxRoot (200+ chars)
+  test("hostMountWorkspaceRoot exceeding typical path length limits", async () => {
+    // Create a deeply nested hostMountWorkspaceRoot (200+ chars)
     const deepRoot = join(
       testDir,
       ...Array.from({ length: 15 }, (_, i) => `level${i}`),
     );
-    const cfg = makeConfig({ sandboxRoot: deepRoot });
+    const cfg = makeConfig({ hostMountWorkspaceRoot: deepRoot });
     const manager = new E2BSandboxManager(cfg);
 
     const conn = await manager.ensureRuntime("wecom:default:deeppath");
@@ -746,20 +710,20 @@ describe("getRuntime / listRuntimes with adversarial identities", () => {
 // ═══════════════════════════════════════════════════════════
 
 describe("Config-level adversarial defense", () => {
-  test("sandboxRoot with null-like values in constructor", () => {
+  test("hostMountWorkspaceRoot with null-like values in constructor", () => {
     // Although TypeScript prevents this, at runtime someone could pass undefined
     // in the config object. Verify graceful handling.
-    const cfg = makeConfig({ sandboxRoot: undefined as unknown as string });
+    const cfg = makeConfig({ hostMountWorkspaceRoot: undefined as unknown as string });
     const manager = new E2BSandboxManager(cfg);
 
-    // The constructor stores sandboxRoot from cfg, which would be undefined.
+    // The constructor stores hostMountWorkspaceRoot from cfg, which would be undefined.
     // resolveWorkspacePaths would then call resolve(undefined, ...) which
     // treats undefined as "."
     expect(manager).toBeTruthy();
   });
 
-  test("absent sandboxRoot in config object", () => {
-    // Create a config without sandboxRoot (TypeScript allows destructuring defaults)
+  test("absent hostMountWorkspaceRoot in config object", () => {
+    // Create a config without hostMountWorkspaceRoot (TypeScript allows destructuring defaults)
     const partialCfg = {
       apiKey: "test-key",
       template: "test",
@@ -770,29 +734,16 @@ describe("Config-level adversarial defense", () => {
       secrets: [],
     } as E2BSandboxManagerConfig;
 
-    // sandboxRoot will be undefined at runtime
+    // hostMountWorkspaceRoot will be undefined at runtime
     const manager = new E2BSandboxManager(partialCfg);
-    expect((manager as any).cfg.sandboxRoot).toBeUndefined();
+    expect((manager as any).cfg.hostMountWorkspaceRoot).toBeUndefined();
   });
 
   test("secrets with very long values do not break initFilesystem", () => {
-    const longValue = "A".repeat(100_000);
     const paths = initFilesystem("wecom:default:longsecret", {
-      sandboxRoot: join(testDir, "sandboxes"),
-      secrets: [
-        { envName: "DEEPSEEK_API_KEY", value: longValue, allowHosts: [] },
-      ],
+      hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     });
-    // Auth.json should contain the long value
-    const authJsonPath = join(
-      paths.opencodeDataHostPath,
-      ".local/share/opencode/auth.json",
-    );
-    expect(existsSync(authJsonPath)).toBeTrue();
-    const content = readFileSync(authJsonPath, "utf8");
-    // Value should be properly JSON-escaped and parsable
-    const parsed = JSON.parse(content);
-    expect(parsed.deepseek.key).toBe(longValue);
+    expect(existsSync(paths.workspaceHostPath)).toBeTrue();
   });
 });
 
@@ -813,17 +764,11 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     expect(lastCreateOpts.metadata["host-mount"]).toBeString();
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     expect(Array.isArray(hostMount)).toBeTrue();
-    expect(hostMount).toHaveLength(2);
-    // Both hostPaths must be absolute strings (not null, not empty)
+    expect(hostMount).toHaveLength(1);
     expect(hostMount[0].hostPath).toBeString();
     expect(hostMount[0].hostPath).not.toBeEmpty();
     expect(hostMount[0].hostPath).toStartWith("/");
-    expect(hostMount[1].hostPath).toBeString();
-    expect(hostMount[1].hostPath).not.toBeEmpty();
-    expect(hostMount[1].hostPath).toStartWith("/");
-    // mountPaths must be exact
     expect(hostMount[0].mountPath).toBe("/workspace");
-    expect(hostMount[1].mountPath).toBe("/data");
   }
 
   test("SQL injection identity: host-mount JSON is valid and parseable", async () => {
@@ -854,24 +799,21 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     await manager.shutdown();
   });
 
-  test("path traversal identity: host-mount paths stay under sandboxRoot", async () => {
+  test("path traversal identity: host-mount paths stay under hostMountWorkspaceRoot", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
     lastCreateOpts = null;
     await manager.ensureRuntime("../../etc/passwd");
 
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
-    // Both hostPaths must remain under the configured sandboxRoot
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
-    expect(hostMount[1].hostPath).toStartWith(cfg.sandboxRoot);
-    // Path must not escape sandboxRoot via ..
+    // hostPath must remain under the configured hostMountWorkspaceRoot
+    expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
     expect(hostMount[0].hostPath).not.toContain("..");
-    expect(hostMount[1].hostPath).not.toContain("..");
 
     await manager.shutdown();
   });
 
-  test("absolute path identity: host-mount paths stay under sandboxRoot", async () => {
+  test("absolute path identity: host-mount paths stay under hostMountWorkspaceRoot", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
     lastCreateOpts = null;
@@ -879,9 +821,8 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
 
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     // Even though the identity starts with /, the path is sanitized and
-    // the resulting hostPath stays within sandboxRoot
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
-    expect(hostMount[1].hostPath).toStartWith(cfg.sandboxRoot);
+    // the resulting hostPath stays within hostMountWorkspaceRoot
+    expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
 
     await manager.shutdown();
   });
@@ -907,7 +848,7 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     await manager.shutdown();
   });
 
-  test("empty identity: host-mount JSON is valid and paths stay under sandboxRoot", async () => {
+  test("empty identity: host-mount JSON is valid and paths stay under hostMountWorkspaceRoot", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
     lastCreateOpts = null;
@@ -916,12 +857,9 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     expect(lastCreateOpts).not.toBeNull();
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     expect(Array.isArray(hostMount)).toBeTrue();
-    expect(hostMount).toHaveLength(2);
-    // Empty identity → buildSandboxName("") → "opencode-"
-    // Paths should still be absolute and under sandboxRoot
+    expect(hostMount).toHaveLength(1);
     expect(hostMount[0].hostPath).toStartWith("/");
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
-    expect(hostMount[1].hostPath).toStartWith(cfg.sandboxRoot);
+    expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
 
     await manager.shutdown();
   });
@@ -937,20 +875,11 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     expect(lastCreateOpts).not.toBeNull();
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     expect(Array.isArray(hostMount)).toBeTrue();
-    expect(hostMount).toHaveLength(2);
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
-    expect(hostMount[1].hostPath).toStartWith(cfg.sandboxRoot);
-    // Path should be truncated (sanitize truncates to 64 chars)
-    const nameSegment = hostMount[0].hostPath.split("/").pop()?.split("\\")[0] ?? "";
-    expect(nameSegment).not.toBe("opencode-" + "x".repeat(64));
-    // Actually, for only-x chars: sanitize("x".repeat(100000)) = "x".repeat(64)
-    // and buildSandboxName(...) = "opencode-" + "x".repeat(64) → but the last
-    // segment after split("/") would include "workspace". Let's check the
-    // directory name is truncated to at most 73 chars (9 for "opencode-" + 64)
-    const dirName = hostMount[0].hostPath
-      .slice(cfg.sandboxRoot.length + 1)
-      .split("/")[0];
-    expect(dirName.length).toBeLessThanOrEqual(73);
+    expect(hostMount).toHaveLength(1);
+    expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
+    // Path leaf should be at most 64 chars (sanitize truncation)
+    const leaf = hostMount[0].hostPath.split("/").pop() ?? "";
+    expect(leaf.length).toBeLessThanOrEqual(64);
 
     await manager.shutdown();
   });
@@ -988,7 +917,7 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     const hostMount = JSON.parse(rawHostMount);
     expect(hostMount[0].hostPath).not.toContain('"');
     expect(hostMount[0].hostPath).toBeString();
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
+    expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
 
     await manager.shutdown();
   });
@@ -1003,9 +932,9 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     const rawHostMount = lastCreateOpts.metadata["host-mount"];
     expect(() => JSON.parse(rawHostMount)).not.toThrow();
     const hostMount = JSON.parse(rawHostMount);
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
+    expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
     expect(hostMount[0].hostPath).not.toContain("C:");
-    // The path should be a proper POSIX path under sandboxRoot
+    // The path should be a proper POSIX path under hostMountWorkspaceRoot
     expect(hostMount[0].hostPath).toStartWith("/");
 
     await manager.shutdown();
@@ -1036,11 +965,9 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
       expect(lastCreateOpts).not.toBeNull();
       const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
       expect(Array.isArray(hostMount)).toBeTrue();
-      expect(hostMount).toHaveLength(2);
-      expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
-      expect(hostMount[1].hostPath).toStartWith(cfg.sandboxRoot);
+      expect(hostMount).toHaveLength(1);
+      expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
       expect(hostMount[0].mountPath).toBe("/workspace");
-      expect(hostMount[1].mountPath).toBe("/data");
 
       capturedPaths.push(hostMount[0].hostPath);
     }

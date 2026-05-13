@@ -3,7 +3,7 @@ import type { ChannelName, Config } from "./config.js";
 import { parseDirectoryStrategy } from "./config.js";
 import { provisionPeerDirectory } from "./directory.js";
 import { isWithinWorkspaceRootPath, normalizeScopedDirectoryPath } from "./path-scope.js";
-import type { OpencodeInstance } from "./opencode-instance.js";
+import type { OpenCodeClientProvider } from "./client-provider.js";
 import type { Logger } from "pino";
 
 export type ScopedDirectoryResult = { ok: true; directory: string } | { ok: false; error: string };
@@ -27,12 +27,13 @@ export function createDirectoryPolicy(input: {
     config: Config;
     workspaceRoot: string;
     logger: Logger;
-    instance?: OpencodeInstance;
+    provider?: OpenCodeClientProvider;
     platform?: NodeJS.Platform;
     defaultDirectory?: string;
 }): DirectoryPolicy {
     const platform = input.platform ?? process.platform;
-    const defaultDirectory = input.defaultDirectory ?? input.instance?.getWorkspaceDirectory() ?? "";
+    const sandboxEnabled = input.provider?.kind === "sandbox";
+    const defaultDirectory = input.defaultDirectory ?? (sandboxEnabled ? "/workspace" : "");
     const normalizeDirectory = (value: string) => normalizeScopedDirectoryPath(value, platform);
     const workspaceRootNormalized = normalizeDirectory(input.workspaceRoot);
 
@@ -59,9 +60,8 @@ export function createDirectoryPolicy(input: {
         resolveScopedDirectory(value: string): ScopedDirectoryResult {
             const trimmed = value.trim();
             if (!trimmed) return { ok: false, error: "Directory is required." };
-            if (input.instance?.kind === "sandbox") {
-                const fixed = input.instance.getWorkspaceDirectory();
-                return { ok: true, directory: normalizeDirectory(fixed) };
+            if (sandboxEnabled) {
+                return { ok: true, directory: normalizeDirectory("/workspace") };
             }
             const resolved = resolve(isAbsolute(trimmed) ? trimmed : join(input.workspaceRoot, trimmed));
             if (!isWithinWorkspaceRoot(resolved)) {
@@ -70,9 +70,8 @@ export function createDirectoryPolicy(input: {
             return { ok: true, directory: normalizeDirectory(resolved) };
         },
         async provisionPolicyDirectory({ channel, identityId, peerId, bindingDirectory }) {
-            if (input.instance?.kind === "sandbox") {
-                const fixed = input.instance.getWorkspaceDirectory({ channel, identityId, peerKey: peerId, directory: defaultDirectory });
-                return { identityDirectory: fixed, policyDirectory: "" };
+            if (sandboxEnabled) {
+                return { identityDirectory: "/workspace", policyDirectory: "" };
             }
             const identityDirStr = resolveIdentityDirectory(channel, identityId);
             const identityStrategy = parseDirectoryStrategy(identityDirStr);

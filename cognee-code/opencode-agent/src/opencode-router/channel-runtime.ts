@@ -325,8 +325,16 @@ export function createChannelRuntime(deps: ChannelRuntimeDeps) {
 
           const accountId = String(ctx.AccountId ?? "default");
           const channel = (String(ctx.OriginatingChannel ?? ctx.Provider ?? "channel").trim().toLowerCase() || "channel") as ChannelName;
+          const chatType = String(ctx.ChatType ?? "").trim().toLowerCase();
+          const isGroup = /^(group|group_chat|channel)$/.test(chatType);
           const peerId = String(ctx.SenderId ?? ctx.From ?? "unknown");
           const bodyText = String(ctx.Body ?? ctx.RawBody ?? "").trim();
+
+          // For group chats, extract the raw group chat ID for reply delivery.
+          // peerId stays as the individual user ID so sandbox/session routing is per-user.
+          if (isGroup && typeof ctx.From === "string") {
+            (ctx as Record<string, unknown>)._bridgeReplyTarget = ctx.From.replace(/^wecom:group:/i, "");
+          }
 
           const inboundParts = buildInboundParts(ctx);
 

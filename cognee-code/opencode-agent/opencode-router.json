@@ -8,20 +8,17 @@
     "healthHost": "0.0.0.0"
   },
   "sandbox": {
-    "rootDir": "/home/opencode-agent/.opencode-router/sandboxes",
-    "portStart": 42000,
-    "portEnd": 45999,
-    "image": "ghcr.io/anomalyco/opencode:latest",
-    "cpus": 1,
-    "memoryMb": 1024,
     "idleTtlMs": 3600000,
     "maxRuntimeMs": 21600000,
-    "stopTimeoutMs": 30000,
     "cleanupIntervalMs": 60000,
     "apiUrl": "http://172.16.17.231:3000",
     "apiKey": "dummy",
     "template": "opencode",
-    "timeoutMs": 300000
+    "timeoutMs": 300000,
+    "hostMount": {
+      "enabled": false,
+      "workspaceRoot": "workspaces"
+    }
   },
   "groupsEnabled": false,
   "plugin": [

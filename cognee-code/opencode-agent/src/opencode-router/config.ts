@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ServerOptions } from "@opencode-ai/sdk/v2/server";
 
 import dotenv from "dotenv";
 
@@ -130,6 +130,32 @@ export type OpenCodeRouterConfigFile = {
         >;
     };
     channels?: Record<string, ChannelConfig>;
+    /** Router runtime paths — resolved at startup. */
+    router?: {
+        rootDir?: string;
+        workspaceDir?: string;
+        dataDir?: string;
+        logDir?: string;
+        healthHost?: string;
+    };
+    /** Sandbox (E2B/Cube) configuration. */
+    sandbox?: {
+        idleTtlMs?: number;
+        maxRuntimeMs?: number;
+        cleanupIntervalMs?: number;
+        apiUrl?: string;
+        apiKey?: string;
+        template?: string;
+        timeoutMs?: number;
+        opencodePort?: number;
+        hostMount?: {
+            enabled?: boolean;
+            workspaceRoot?: string;
+        };
+    };
+    /** OpenCode server config — written verbatim into sandbox opencode.json. */
+    opencode?: Record<string, unknown>;
+    healthPort?: number;
 };
 
 export type ModelRef = {
@@ -137,14 +163,45 @@ export type ModelRef = {
     modelID: string;
 };
 
+/** Fully-resolved runtime paths — computed once at startup. */
+export type RuntimePaths = {
+    configPath: string;
+    rootDir: string;
+    workspaceDir: string;
+    dataDir: string;
+    logDir: string;
+};
+
+/** Fully-resolved sandbox configuration — computed once at startup. */
+export type SandboxConfig = {
+    apiUrl: string;
+    apiKey: string;
+    template: string;
+    timeoutMs: number;
+    opencodePort: number;
+    idleTtlMs: number;
+    maxRuntimeMs: number;
+    cleanupIntervalMs: number;
+    hostMountEnabled: boolean;
+    hostMountWorkspaceRoot: string;
+    healthHost: string;
+};
+
 export type Config = {
     configPath: string;
     configFile: OpenCodeRouterConfigFile;
+    /** All runtime paths, resolved at startup. */
+    paths: RuntimePaths;
+    /** Fully-resolved sandbox config (only meaningful in sandbox mode). */
+    sandbox: SandboxConfig;
+    /** Options for the classic-mode OpenCode server. */
+    opencodeServerOptions: ServerOptions;
     opencodeUrl: string;
     opencodeDirectory: string;
     opencodeUsername?: string;
     opencodePassword?: string;
     model?: ModelRef;
+
     plugins: {
         enabled: boolean;
         allow: string[];
@@ -173,7 +230,8 @@ export type Config = {
     groupsEnabled: boolean;
     permissionMode: "allow" | "deny";
     toolOutputLimit: number;
-    healthPort?: number;
+    healthPort: number;
+    healthHost: string;
     logLevel: string;
 };
 
@@ -188,6 +246,10 @@ function parseInteger(value: string | undefined): number | undefined {
     if (!value) return undefined;
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseIntWithDefault(value: string | undefined, fallback: number): number {
+    return parseInteger(value) ?? fallback;
 }
 
 function parseList(value: string | undefined): string[] {
@@ -405,17 +467,6 @@ function parseModel(value: string | undefined): ModelRef | undefined {
     const modelID = parts.slice(1).join("/");
     if (!providerID || !modelID) return undefined;
     return { providerID, modelID };
-}
-
-function expandHome(value: string): string {
-    if (!value.startsWith("~/")) return value;
-    return path.join(os.homedir(), value.slice(2));
-}
-
-function resolveConfigPath(dataDir: string, env: EnvLike): string {
-    const override = env.OPENCODE_ROUTER_CONFIG_PATH?.trim();
-    if (override) return expandHome(override);
-    return path.join(dataDir, "opencode-router.json");
 }
 
 export function readConfigFile(configPath: string): {
@@ -646,34 +697,95 @@ export function loadConfig(
 ): Config {
     const requireOpencode = options.requireOpencode ?? false;
 
-    const defaultDataDir = path.join(
-        os.homedir(),
-        ".openwork",
-        "opencode-router",
-    );
-    const dataDir = expandHome(env.OPENCODE_ROUTER_DATA_DIR ?? defaultDataDir);
-    const dbPath = expandHome(
-        env.OPENCODE_ROUTER_DB_PATH ?? path.join(dataDir, "opencode-router.db"),
-    );
-    const logFile = expandHome(
-        env.OPENCODE_ROUTER_LOG_FILE ??
-            path.join(dataDir, "logs", "opencode-router.log"),
-    );
-    const configPath = resolveConfigPath(dataDir, env);
-    let { config: configFile } = readConfigFile(configPath);
+    // ── 1. Locate config file ──────────────────────────────────────────────
+    const configPath = env.OPENCODE_ROUTER_CONFIG_PATH?.trim()
+        ? path.resolve(env.OPENCODE_ROUTER_CONFIG_PATH.trim())
+        : path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), "opencode-router.json");
+
+    const { config: configFile } = readConfigFile(configPath);
+
+    // ── 2. Resolve runtime paths (all mandatory, no fallbacks at use-time) ─
+    const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const rootDir = env.OPENCODE_ROUTER_ROOT_DIR?.trim()
+        ? path.resolve(env.OPENCODE_ROUTER_ROOT_DIR.trim())
+        : path.resolve(projectRoot, configFile.router?.rootDir ?? ".opencode-router");
+    const workspaceDir = path.resolve(rootDir, configFile.router?.workspaceDir ?? "workspaces");
+    const dataDir = env.OPENCODE_ROUTER_DATA_DIR?.trim()
+        ? path.resolve(env.OPENCODE_ROUTER_DATA_DIR.trim())
+        : path.resolve(rootDir, configFile.router?.dataDir ?? "data");
+    const logDir = env.OPENCODE_ROUTER_LOG_DIR?.trim()
+        ? path.resolve(env.OPENCODE_ROUTER_LOG_DIR.trim())
+        : path.resolve(dataDir, configFile.router?.logDir ?? "logs");
+
+    // Ensure dirs exist
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(logDir, { recursive: true });
+
+    const paths: RuntimePaths = { configPath, rootDir, workspaceDir, dataDir, logDir };
+
+    const logFile = env.OPENCODE_ROUTER_LOG_FILE?.trim()
+        ? path.resolve(env.OPENCODE_ROUTER_LOG_FILE.trim())
+        : path.join(logDir, "opencode-agent.log");
+    const dbPath = env.OPENCODE_ROUTER_DB_PATH?.trim()
+        ? path.resolve(env.OPENCODE_ROUTER_DB_PATH.trim())
+        : path.join(dataDir, "opencode-router.db");
+
+    // ── 3. OpenCode directory ──────────────────────────────────────────────
     const opencodeDirectory =
-        env.OPENCODE_DIRECTORY?.trim() || configFile.opencodeDirectory || "";
+        env.OPENCODE_DIRECTORY?.trim() || configFile.opencodeDirectory?.trim() || "";
     if (!opencodeDirectory && requireOpencode) {
         throw new Error("OPENCODE_DIRECTORY is required");
     }
     const resolvedDirectory = opencodeDirectory || process.cwd();
 
-    const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
+    // ── 4. Sandbox config (fully resolved, no downstream ??) ──────────────
+    const s = configFile.sandbox ?? {};
+    const idleTtlMs = parseIntWithDefault(env.OPENCODE_SANDBOX_IDLE_TTL_MS, s.idleTtlMs ?? 3_600_000);
+    const maxRuntimeMs = parseIntWithDefault(env.OPENCODE_SANDBOX_MAX_RUNTIME_MS, s.maxRuntimeMs ?? 21_600_000);
+    const sandboxTimeoutMs = parseIntWithDefault(env.OPENCODE_SANDBOX_TIMEOUT_MS, s.timeoutMs ?? idleTtlMs);
+    const hostMountWorkspaceRel = s.hostMount?.workspaceRoot?.trim() ?? configFile.router?.workspaceDir?.trim() ?? "workspaces";
+    const hostMountWorkspaceRoot = path.isAbsolute(hostMountWorkspaceRel)
+        ? hostMountWorkspaceRel
+        : path.resolve(rootDir, hostMountWorkspaceRel);
+    const healthHost = configFile.router?.healthHost?.trim() || "127.0.0.1";
+
+    const sandbox: SandboxConfig = {
+        apiUrl: env.OPENCODE_SANDBOX_API_URL?.trim() ?? s.apiUrl?.trim() ?? "",
+        apiKey: env.OPENCODE_SANDBOX_API_KEY?.trim() ?? s.apiKey?.trim() ?? "dummy",
+        template: env.OPENCODE_SANDBOX_TEMPLATE?.trim() ?? s.template?.trim() ?? "opencode-tools",
+        timeoutMs: sandboxTimeoutMs,
+        opencodePort: parseIntWithDefault(env.OPENCODE_SANDBOX_OPENCODE_PORT, s.opencodePort ?? 4096),
+        idleTtlMs,
+        maxRuntimeMs,
+        cleanupIntervalMs: parseIntWithDefault(env.OPENCODE_SANDBOX_CLEANUP_INTERVAL_MS, s.cleanupIntervalMs ?? 60_000),
+        hostMountEnabled: s.hostMount?.enabled === true,
+        hostMountWorkspaceRoot,
+        healthHost,
+    };
+
+    // ── 5. Classic-mode OpenCode server options ────────────────────────────
+    const opencodeServerOptions: ServerOptions = {
+        hostname: env.OPENCODE_HOSTNAME?.trim() ?? "127.0.0.1",
+        port: parseIntWithDefault(env.OPENCODE_PORT, 0), // 0 = random available port
+        config: configFile.opencode as any,
+    };
+
+    // ── 6. Health port ─────────────────────────────────────────────────────
+    const healthPort =
+        parseInteger(env.OPENCODE_ROUTER_HEALTH_PORT) ??
+        parseInteger(env.PORT) ??
+        configFile.healthPort ??
+        3005;
+
+    // ── 7. Channels / bots ────────────────────────────────────────────────
     const permissionMode =
         env.PERMISSION_MODE?.toLowerCase() === "deny" ? "deny" : "allow";
+    const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
+    const model = parseModel(env.OPENCODE_ROUTER_MODEL);
 
-    // Identities are loaded from config. Env vars are still supported as a convenience
-    // for single-identity setups.
+    const plugins = normalizePluginsConfig(configFile);
+    const pluginOrigins = normalizePluginOrigins(configFile, configPath);
+
     const telegramBots = coerceTelegramBots(configFile);
     const slackApps = coerceSlackApps(configFile);
     const channelIdentities = coerceChannelAccounts(configFile);
@@ -684,47 +796,16 @@ export function loadConfig(
     }
     const envSlackBot = env.SLACK_BOT_TOKEN?.trim() ?? "";
     const envSlackApp = env.SLACK_APP_TOKEN?.trim() ?? "";
-    if (
-        envSlackBot &&
-        envSlackApp &&
-        !slackApps.some(
-            (app) =>
-                app.botToken === envSlackBot && app.appToken === envSlackApp,
-        )
-    ) {
-        slackApps.unshift({
-            id: "env",
-            botToken: envSlackBot,
-            appToken: envSlackApp,
-            enabled: true,
-        });
+    if (envSlackBot && envSlackApp && !slackApps.some((app) => app.botToken === envSlackBot && app.appToken === envSlackApp)) {
+        slackApps.unshift({ id: "env", botToken: envSlackBot, appToken: envSlackApp, enabled: true });
     }
-    const healthPort =
-        parseInteger(env.OPENCODE_ROUTER_HEALTH_PORT) ??
-        // Convenience alias (common on PaaS / local experiments)
-        parseInteger(env.PORT) ??
-        3005;
-    const model = parseModel(env.OPENCODE_ROUTER_MODEL);
-    const plugins = normalizePluginsConfig(configFile);
-    const pluginOrigins = normalizePluginOrigins(configFile, configPath);
 
-    const telegramEnabledDefault =
-        (configFile.channels?.["telegram"] as ChannelConfig | undefined)
-            ?.enabled ?? true;
-    const slackEnabledDefault =
-        (configFile.channels?.["slack"] as ChannelConfig | undefined)
-            ?.enabled ?? true;
+    const telegramEnabledDefault = (configFile.channels?.["telegram"] as ChannelConfig | undefined)?.enabled ?? true;
+    const slackEnabledDefault = (configFile.channels?.["slack"] as ChannelConfig | undefined)?.enabled ?? true;
 
-    // Apply per-channel env-var overrides to channel identities.
-    // Apply per-channel env-var overrides to channel identities.
-    // Convention: channel name "my-channel" → env var "MY_CHANNEL_ENABLED".
     const channels: ChannelIdentity[] = channelIdentities.map((identity) => {
         const channelEnabledDefault =
-            (
-                configFile.channels?.[identity.channel] as
-                    | ChannelConfig
-                    | undefined
-            )?.enabled ?? true;
+            (configFile.channels?.[identity.channel] as ChannelConfig | undefined)?.enabled ?? true;
         const envKey = `${identity.channel.toUpperCase().replace(/-/g, "_")}_ENABLED`;
         return {
             ...identity,
@@ -737,10 +818,10 @@ export function loadConfig(
     return {
         configPath,
         configFile,
-        opencodeUrl:
-            env.OPENCODE_URL?.trim() ||
-            configFile.opencodeUrl ||
-            "http://127.0.0.1:4096",
+        paths,
+        sandbox,
+        opencodeServerOptions,
+        opencodeUrl: env.OPENCODE_URL?.trim() || configFile.opencodeUrl || "http://127.0.0.1:4096",
         opencodeDirectory: resolvedDirectory,
         opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
         opencodePassword: env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
@@ -749,28 +830,22 @@ export function loadConfig(
         pluginOrigins,
         telegramBots: telegramBots.map((bot) => ({
             ...bot,
-            enabled:
-                bot.enabled !== false &&
-                parseBoolean(env.TELEGRAM_ENABLED, telegramEnabledDefault),
+            enabled: bot.enabled !== false && parseBoolean(env.TELEGRAM_ENABLED, telegramEnabledDefault),
         })),
         slackApps: slackApps.map((app) => ({
             ...app,
-            enabled:
-                app.enabled !== false &&
-                parseBoolean(env.SLACK_ENABLED, slackEnabledDefault),
+            enabled: app.enabled !== false && parseBoolean(env.SLACK_ENABLED, slackEnabledDefault),
         })),
         channels,
         dataDir,
         dbPath,
         logFile,
         toolUpdatesEnabled: parseBoolean(env.TOOL_UPDATES_ENABLED, false),
-        groupsEnabled: parseBoolean(
-            env.GROUPS_ENABLED,
-            configFile.groupsEnabled ?? false,
-        ),
+        groupsEnabled: parseBoolean(env.GROUPS_ENABLED, configFile.groupsEnabled ?? false),
         permissionMode,
         toolOutputLimit,
         healthPort,
-        logLevel: env.LOG_LEVEL?.trim() || "info",
+        healthHost,
+        logLevel: env.LOG_LEVEL?.trim() || "debug",
     };
 }

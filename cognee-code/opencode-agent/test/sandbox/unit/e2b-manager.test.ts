@@ -1,5 +1,5 @@
 /**
- * Unit tests for E2BSandboxManager — sandboxRoot config, setStore(), and
+ * Unit tests for E2BSandboxManager — hostMount workspaceRoot, setStore(), and
  * initFilesystem integration in the ensureRuntime flow.
  *
  * Mocks: @e2b/code-interpreter (Sandbox SDK), @opencode-ai/sdk/v2 (health checks).
@@ -102,7 +102,8 @@ function makeConfig(
     idleTtlMs: 60_000,
     maxRuntimeMs: 300_000,
     cleanupIntervalMs: 30_000,
-    sandboxRoot: join(testDir, "sandboxes"),
+    hostMountEnabled: true, // default for existing host-mount tests
+    hostMountWorkspaceRoot: join(testDir, "sandboxes"),
     secrets: [],
     ...overrides,
   };
@@ -113,9 +114,9 @@ function makeConfig(
 // ═══════════════════════════════════════════════════════════
 
 describe("E2BSandboxManagerConfig", () => {
-  test("accepts sandboxRoot and store fields", () => {
+  test("accepts hostMountWorkspaceRoot and store fields", () => {
     const cfg = makeConfig({ store: undefined });
-    expect(cfg.sandboxRoot).toBe(join(testDir, "sandboxes"));
+    expect(cfg.hostMountWorkspaceRoot).toBe(join(testDir, "sandboxes"));
     expect(cfg.store).toBeUndefined();
   });
 
@@ -204,32 +205,6 @@ describe("E2BSandboxManager.stopRuntime / removeRuntime", () => {
 
     await manager.shutdown();
   });
-
-  test("removeRuntime removes the instance from the map", async () => {
-    const cfg = makeConfig();
-    const manager = new E2BSandboxManager(cfg);
-    const identity = "wecom:default:heidi";
-
-    await manager.ensureRuntime(identity);
-    expect(await manager.getRuntime(identity)).not.toBeNull();
-
-    await manager.removeRuntime(identity);
-    expect(await manager.getRuntime(identity)).toBeNull();
-
-    await manager.shutdown();
-  });
-
-  test("stopRuntime on nonexistent identity does not throw", async () => {
-    const manager = new E2BSandboxManager(makeConfig());
-    await manager.stopRuntime("nonexistent", "manual");
-    // No throw = success
-  });
-
-  test("removeRuntime on nonexistent identity does not throw", async () => {
-    const manager = new E2BSandboxManager(makeConfig());
-    await manager.removeRuntime("nonexistent");
-    // No throw = success
-  });
 });
 
 describe("E2BSandboxManager.provisionFiles()", () => {
@@ -272,16 +247,14 @@ describe("Sandbox.create() — host-mount metadata", () => {
 
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     expect(Array.isArray(hostMount)).toBeTrue();
-    expect(hostMount).toHaveLength(2);
+    expect(hostMount).toHaveLength(1);
     expect(hostMount[0]).toHaveProperty("hostPath");
     expect(hostMount[0]).toHaveProperty("mountPath");
-    expect(hostMount[1]).toHaveProperty("hostPath");
-    expect(hostMount[1]).toHaveProperty("mountPath");
 
     await manager.shutdown();
   });
 
-  test("host-mount mountPath values are /workspace and /data", async () => {
+  test("host-mount mountPath is /workspace", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
 
@@ -290,14 +263,11 @@ describe("Sandbox.create() — host-mount metadata", () => {
 
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     expect(hostMount[0].mountPath).toBe("/workspace");
-    expect(hostMount[1].mountPath).toBe("/data");
-    // Verify both mount entries reference distinct host paths
-    expect(hostMount[0].hostPath).not.toBe(hostMount[1].hostPath);
 
     await manager.shutdown();
   });
 
-  test("host-mount hostPath values are absolute paths starting with /", async () => {
+  test("host-mount hostPath is an absolute path starting with /", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
 
@@ -306,15 +276,11 @@ describe("Sandbox.create() — host-mount metadata", () => {
 
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     expect(hostMount[0].hostPath).toStartWith("/");
-    expect(hostMount[1].hostPath).toStartWith("/");
-    // Both paths should be under the sandboxRoot
-    expect(hostMount[0].hostPath).toStartWith(cfg.sandboxRoot);
-    expect(hostMount[1].hostPath).toStartWith(cfg.sandboxRoot);
 
     await manager.shutdown();
   });
 
-  test("host-mount hostPath matches the runtime workspaceHostPath and opencodeDataHostPath", async () => {
+  test("host-mount hostPath matches the runtime workspaceHostPath", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
     const identity = "wecom:default:pathmatch-test";
@@ -325,8 +291,8 @@ describe("Sandbox.create() — host-mount metadata", () => {
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
     const runtime = await manager.getRuntime(identity);
     expect(runtime).not.toBeNull();
+    expect(hostMount.length).toBe(1);
     expect(hostMount[0].hostPath).toBe(runtime!.workspaceHostPath);
-    expect(hostMount[1].hostPath).toBe(runtime!.opencodeDataHostPath);
 
     await manager.shutdown();
   });
@@ -363,7 +329,6 @@ describe("Sandbox.create() — host-mount metadata", () => {
 
     // Paths should be different for different identities
     expect(hostMountAlice[0].hostPath).not.toBe(hostMountBob[0].hostPath);
-    expect(hostMountAlice[1].hostPath).not.toBe(hostMountBob[1].hostPath);
 
     await manager.shutdown();
   });
@@ -387,22 +352,19 @@ describe("Sandbox.create() — host-mount metadata", () => {
 });
 
 describe("E2BSandboxManager ensureRuntime — initFilesystem integration", () => {
-  test("initFilesystem creates workspace + data directories on host", async () => {
+  test("initFilesystem creates workspace directory on host", async () => {
     const cfg = makeConfig();
     const manager = new E2BSandboxManager(cfg);
     const identity = "wecom:default:alice";
 
     const result = await manager.ensureRuntime(identity);
 
-    // Connection returned successfully
     expect(result.sandboxName).toBe("opencode-alice");
     expect(result.sandboxId).toMatch(/^test-sandbox-\d+$/);
 
-    // initFilesystem should have created these directories
-    const expectedWs = join(cfg.sandboxRoot, "opencode-alice", "workspace");
-    const expectedData = join(cfg.sandboxRoot, "opencode-alice", "data");
+    // Path: join(workspaceRoot, safePeer)
+    const expectedWs = join(cfg.hostMountWorkspaceRoot!, "alice");
     expect(existsSync(expectedWs)).toBeTrue();
-    expect(existsSync(expectedData)).toBeTrue();
 
     await manager.shutdown();
   });
@@ -415,11 +377,10 @@ describe("E2BSandboxManager ensureRuntime — initFilesystem integration", () =>
     const result = await manager.ensureRuntime(identity);
     expect(result.sandboxName).toBe("opencode-bob");
 
-    // Access the runtime instance to verify workspaceHostPath
     const runtime = await manager.getRuntime(identity);
     expect(runtime).not.toBeNull();
     expect(runtime!.workspaceHostPath).toBe(
-      join(cfg.sandboxRoot, "opencode-bob", "workspace"),
+      join(cfg.hostMountWorkspaceRoot!, "bob"),
     );
     expect(existsSync(runtime!.workspaceHostPath)).toBeTrue();
 
@@ -436,8 +397,8 @@ describe("E2BSandboxManager ensureRuntime — initFilesystem integration", () =>
     const runtimes = await manager.listRuntimes();
     expect(runtimes).toHaveLength(2);
 
-    const carolWs = join(cfg.sandboxRoot, "opencode-carol", "workspace");
-    const daveWs = join(cfg.sandboxRoot, "opencode-dave", "workspace");
+    const carolWs = join(cfg.hostMountWorkspaceRoot!, "carol");
+    const daveWs = join(cfg.hostMountWorkspaceRoot!, "dave");
     expect(existsSync(carolWs)).toBeTrue();
     expect(existsSync(daveWs)).toBeTrue();
 
@@ -452,7 +413,7 @@ describe("E2BSandboxManager ensureRuntime — initFilesystem integration", () =>
     // First call — creates directories and sandbox
     await manager.ensureRuntime(identity);
 
-    const wsDir = join(cfg.sandboxRoot, "opencode-eve", "workspace");
+    const wsDir = join(cfg.hostMountWorkspaceRoot!, "eve");
     expect(existsSync(wsDir)).toBeTrue();
 
     // Second call — reuses existing runtime (no crash, returns connection)
@@ -480,8 +441,82 @@ describe("E2BSandboxManager ensureRuntime — initFilesystem integration", () =>
     // After ensureRuntime, workspaceHostPath should be populated
     const runtime = await manager.getRuntime(identity);
     expect(runtime!.workspaceHostPath).toBe(
-      join(cfg.sandboxRoot, "opencode-frank", "workspace"),
+      join(cfg.hostMountWorkspaceRoot!, "frank"),
     );
+    expect(existsSync(runtime!.workspaceHostPath)).toBeTrue();
+
+    await manager.shutdown();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// TEST SUITE: host-mount disabled (E2B Cloud mode)
+// ═══════════════════════════════════════════════════════════
+
+describe("E2BSandboxManager — hostMountEnabled: false", () => {
+  test("does NOT set host-mount metadata", async () => {
+    const cfg = makeConfig({ hostMountEnabled: false });
+    const manager = new E2BSandboxManager(cfg);
+
+    lastCreateOpts = null;
+    await manager.ensureRuntime("wecom:default:no-hostmount");
+
+    expect(lastCreateOpts.metadata["host-mount"]).toBeUndefined();
+    expect(lastCreateOpts.metadata["opencode.identity"]).toBe("wecom:default:no-hostmount");
+
+    await manager.shutdown();
+  });
+
+  test("workspaceHostPath is empty string", async () => {
+    const cfg = makeConfig({ hostMountEnabled: false });
+    const manager = new E2BSandboxManager(cfg);
+    const identity = "wecom:default:no-path";
+
+    await manager.ensureRuntime(identity);
+    const runtime = await manager.getRuntime(identity);
+    expect(runtime).not.toBeNull();
+    expect(runtime!.workspaceHostPath).toBe("");
+
+    await manager.shutdown();
+  });
+
+  test("host directories are NOT created on disk", async () => {
+    const cfg = makeConfig({ hostMountEnabled: false });
+    const manager = new E2BSandboxManager(cfg);
+
+    await manager.ensureRuntime("wecom:default:no-dirs");
+
+    // Workspace path should NOT exist (initFilesystem was skipped)
+    const wsPath = join(cfg.hostMountWorkspaceRoot!, "no-dirs");
+    expect(existsSync(wsPath)).toBeFalse();
+
+    await manager.shutdown();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// TEST SUITE: host-mount workspaceRoot (router-aligned paths)
+// ═══════════════════════════════════════════════════════════
+
+describe("E2BSandboxManager — hostMountWorkspaceRoot", () => {
+  test("uses router-aligned path when workspaceRoot is set", async () => {
+    const workspaceRoot = join(testDir, "per-peer-workspaces");
+    const cfg = makeConfig({
+      hostMountEnabled: true,
+      hostMountWorkspaceRoot: workspaceRoot,
+    });
+    const manager = new E2BSandboxManager(cfg);
+    const identity = "wecom:default:alice-peer";
+
+    lastCreateOpts = null;
+    await manager.ensureRuntime(identity);
+
+    const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
+    // Router-aligned: no "opencode-" prefix, no "workspace/" subdir
+    expect(hostMount[0].hostPath).toBe(join(workspaceRoot, "alice-peer"));
+
+    const runtime = await manager.getRuntime(identity);
+    expect(runtime!.workspaceHostPath).toBe(join(workspaceRoot, "alice-peer"));
     expect(existsSync(runtime!.workspaceHostPath)).toBeTrue();
 
     await manager.shutdown();

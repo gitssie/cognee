@@ -3,13 +3,29 @@
  *
  * Mirrors the local SandboxManager shape: manager owns per-identity instances,
  * instances own lifecycle, serialization, readiness, monitoring, and disposal.
+ *
+ * Design notes for the Cube/E2B variant:
+ *
+ * - The sandbox template already runs `opencode serve` as its main process.
+ *   We never launch opencode ourselves — the sandbox image owns that.
+ *
+ * - IMPORTANT: The current CubeAPI version does NOT pass `envs` from
+ *   `Sandbox.create` into the container.
+ *
+ * - host-mount strategy: the host directory is mounted at /home/user inside
+ *   the sandbox. This means opencode's config/data dirs
+ *   (/home/user/.config/opencode, /home/user/.local/share/opencode) live on
+ *   the host and can be pre-populated before or between sandbox runs.
+ *   The workspace is at /home/user/workspace (E2B_WORKSPACE).
+ *
+ * - auth.json and opencode.json are written to the host directory on every
+ *   ensure() call, before opencode starts reading them.
  */
 
 import { Effect, Semaphore } from "effect";
-import { Sandbox, type CommandHandle } from "@e2b/code-interpreter";
+import { Sandbox } from "@e2b/code-interpreter";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { Logger } from "pino";
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type {
@@ -18,6 +34,7 @@ import type {
   SandboxConnection,
   SandboxPresence,
   SandboxRuntime,
+  SandboxStatus,
 } from "./types";
 import {
   createOpencodeServerClient,
@@ -26,23 +43,26 @@ import {
 } from "./opencode-client";
 import { buildSandboxEnvironment } from "./env";
 import { buildOpencodeAgentJson, buildSandboxName } from "./workspace";
-import { initFilesystem, type WorkspacePaths } from "./workspace";
+import { initFilesystem } from "./workspace";
 import type { BridgeStore } from "../opencode-router/db.js";
+import type { Config } from "../opencode-router/config.js";
 
 import agentsMd from "../opencode-router/workspace-template/AGENTS.txt";
 import toolsMd from "../opencode-router/workspace-template/TOOLS.txt";
 import memoryMd from "../opencode-router/workspace-template/MEMORY.txt";
 
-function isMissingPausedSandboxError(error: unknown): boolean {
+function isMissingkilldSandboxError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  const cause = error instanceof Error ? (error as { cause?: unknown }).cause : undefined;
-  const causeMessage = cause instanceof Error ? cause.message : String(cause ?? "");
+  const cause =
+    error instanceof Error ? (error as { cause?: unknown }).cause : undefined;
+  const causeMessage =
+    cause instanceof Error ? cause.message : String(cause ?? "");
   return (
     message.includes("SandboxNotFoundError") ||
-    message.includes("Paused sandbox") ||
+    message.includes("killd sandbox") ||
     message.includes("not found") ||
     causeMessage.includes("SandboxNotFoundError") ||
-    causeMessage.includes("Paused sandbox") ||
+    causeMessage.includes("killd sandbox") ||
     causeMessage.includes("not found")
   );
 }
@@ -59,7 +79,7 @@ async function inspectE2BSandbox(
     } as any);
     return { exists: true, state: (info as { state?: string }).state };
   } catch (error) {
-    if (isMissingPausedSandboxError(error)) return { exists: false };
+    if (isMissingkilldSandboxError(error)) return { exists: false };
     throw error;
   }
 }
@@ -71,12 +91,15 @@ export interface E2BSandboxManagerConfig {
   timeoutMs: number;
   idleTtlMs: number;
   maxRuntimeMs: number;
-  opencodePort?: number;
+  opencodePort: number;
   secrets: ProviderSecret[];
   cleanupIntervalMs: number;
-  sandboxRoot: string;
+  hostMountEnabled: boolean;
+  hostMountWorkspaceRoot: string;
   store?: BridgeStore;
   logger?: Logger;
+  /** Parsed router config — used to write opencode.json into the sandbox. */
+  config: Config;
 }
 
 const API_KEY_PROVIDER: Record<string, string> = {
@@ -84,6 +107,9 @@ const API_KEY_PROVIDER: Record<string, string> = {
   ANTHROPIC_API_KEY: "anthropic",
   OPENAI_API_KEY: "openai",
 };
+
+export const E2B_HOME = "/home/user";
+export const E2B_WORKSPACE = "/home/user/workspace";
 
 const E2B_OPENCODE_PATHS = {
   configDir: "/home/user/.config/opencode",
@@ -96,13 +122,20 @@ const E2B_OPENCODE_PATHS = {
 
 class E2BSandboxInstance implements SandboxRuntime {
   sandboxName: string;
-  image: string;
+  template: string;
   hostPort = 0;
   guestPort: number;
-  serverPassword = "";
   workspaceHostPath = "";
-  opencodeDataHostPath = "";
-  status: SandboxRuntime["status"] = "stopped";
+  /**
+   * Derived entirely from `this.sandbox`:
+   *   sandbox !== null → "running"
+   *   sandbox === null → "stopped"
+   *
+   * No manually written status field — the sandbox handle IS the source of truth.
+   */
+  get status(): SandboxStatus {
+    return this.sandbox !== null ? "running" : "stopped";
+  }
   lastActivityAt = 0;
   lastHealthCheckAt = 0;
   createdAt = 0;
@@ -113,7 +146,6 @@ class E2BSandboxInstance implements SandboxRuntime {
   private client: OpencodeClient | null = null;
   private baseUrl = "";
   private readonly mutex = Semaphore.makeUnsafe(1);
-  private sandboxRoot: string;
 
   constructor(
     public identity: string,
@@ -122,9 +154,8 @@ class E2BSandboxInstance implements SandboxRuntime {
     private onDispose: (identity: string, instance: E2BSandboxInstance) => void,
   ) {
     this.sandboxName = buildSandboxName(identity);
-    this.image = cfg.template;
-    this.guestPort = cfg.opencodePort ?? OPENCODE_GUEST_PORT;
-    this.sandboxRoot = cfg.sandboxRoot;
+    this.template = cfg.template;
+    this.guestPort = cfg.opencodePort;
   }
 
   setLogger(logger: Logger | undefined): void {
@@ -133,53 +164,78 @@ class E2BSandboxInstance implements SandboxRuntime {
 
   ensure(sandboxId?: string | null): Promise<SandboxConnection> {
     if (sandboxId && !this.sandboxId) this.sandboxId = sandboxId;
-    return this.runExclusive(this.ensureEffect());
+    return this.runExclusive(this.acquireEffect());
   }
 
   stop(reason: "idle" | "manual" = "manual"): Promise<void> {
-    return this.runExclusive(this.stopEffect(reason));
+    return this.runExclusive(this.killEffect(reason));
   }
 
   remove(): Promise<void> {
-    return this.runExclusive(this.removeEffect());
+    return this.runExclusive(this.destroyEffect());
   }
 
   provisionFiles(sourcePaths: string[]): Promise<Map<string, string>> {
-    return this.runExclusive(this.provisionFilesEffect(sourcePaths));
+    return this.runExclusive(
+      Effect.tryPromise(() => this.uploadFilesAsync(sourcePaths)),
+    );
   }
 
-  private ensureEffect(): Effect.Effect<SandboxConnection, unknown> {
+  private acquireEffect(): Effect.Effect<SandboxConnection, unknown> {
     return Effect.suspend(() => {
-      if (this.status === "running" && this.sandbox && this.client) {
-        this.logger?.info({ sandboxId: this.sandboxId, sandboxName: this.sandboxName }, "reuse running e2b sandbox");
-        return Effect.succeed(this.buildConnection());
+      // Already have an in-memory sandbox handle — verify it is still running
+      // against the E2B API before reusing.
+      if (this.sandbox !== null && this.client) {
+        const sb = this.sandbox;
+        return Effect.tryPromise(async (): Promise<SandboxConnection> => {
+          const alive = await sb.isRunning();
+          if (alive) {
+            this.logger?.info({ sandboxId: this.sandboxId }, "reuse running e2b sandbox");
+            this.lastActivityAt = Date.now();
+            return this.connection();
+          }
+          // Sandbox died externally — clear stale handle and start fresh.
+          this.logger?.warn({ sandboxId: this.sandboxId }, "sandbox no longer running; clearing stale handle");
+          this.sandbox = null;
+          this.client = null;
+          this.baseUrl = "";
+          return this.sandboxId
+            ? this.reconnectSandboxAsync()
+            : this.createSandboxAsync();
+        });
       }
 
-      this.logger?.info({ status: this.status, sandboxId: this.sandboxId }, "start e2b sandbox");
-      if (this.sandbox) {
-        return this.stopEffect("manual", false).pipe(Effect.andThen(() => this.startEffect()));
-      }
-      return this.startEffect();
+      // Clean up any stale in-memory sandbox handle before starting fresh.
+      const cleanup = this.sandbox
+        ? this.killEffect("manual", false)
+        : Effect.void;
+
+      // Choose path based on whether we have a persisted sandboxId to reconnect.
+      const start = this.sandboxId
+        ? Effect.tryPromise(() => this.reconnectSandboxAsync())
+        : Effect.tryPromise(() => this.createSandboxAsync());
+
+      return cleanup.pipe(Effect.andThen(start));
     });
   }
 
-  private stopEffect(
+  private killEffect(
     reason: "idle" | "manual",
     dispose = true,
   ): Effect.Effect<void, unknown> {
     return Effect.suspend(() => {
       const sb = this.sandbox;
       const stopCurrent = sb
-        ? Effect.ignore(Effect.tryPromise(() => sb.pause()))
+        ? Effect.ignore(Effect.tryPromise(() => sb.kill()))
         : Effect.void;
 
       return stopCurrent.pipe(
-        Effect.andThen(() => this.finalizeRuntimeEffect("stopped", dispose)),
+        Effect.andThen(() => this.clearRuntimeState(dispose)),
       );
     });
   }
 
-  private removeEffect(): Effect.Effect<void, unknown> {
+  private destroyEffect(): Effect.Effect<void, unknown> {
     return Effect.suspend(() => {
       const sb = this.sandbox;
       const killCurrent = sb
@@ -187,193 +243,225 @@ class E2BSandboxInstance implements SandboxRuntime {
         : Effect.void;
 
       return killCurrent.pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            const [ch, id, pk] = this.identity.split(":");
-            this.cfg.store?.deleteSandbox(ch, id, pk);
-          }),
-        ),
-        Effect.andThen(() => this.finalizeRuntimeEffect("stopped", true)),
+        Effect.andThen(() => this.clearRuntimeState(true)),
       );
     });
   }
 
-  private provisionFilesEffect(
+  private async uploadFilesAsync(
     sourcePaths: string[],
-  ): Effect.Effect<Map<string, string>, unknown> {
-    return Effect.suspend(() => {
-      if (!this.sandbox) {
-        return Effect.fail(new Error(`Sandbox not running for: ${this.identity}`));
-      }
-      const mediaDir = "/workspace/.opencode-router/media";
-      return Effect.tryPromise(() => this.sandbox!.commands.run(`mkdir -p ${mediaDir}`)).pipe(
-        Effect.andThen(
-          Effect.forEach(sourcePaths, (src) => {
-            const dst = `${mediaDir}/${basename(src)}`;
-            return Effect.tryPromise(async () => {
-              const content = await readFile(src);
-              await this.sandbox!.files.write(dst, content as unknown as string);
-              return [src, dst] as const;
-            });
-          }),
-        ),
-        Effect.map((entries) => new Map(entries)),
-      );
-    });
+  ): Promise<Map<string, string>> {
+    if (!this.sandbox) {
+      throw new Error(`Sandbox not running for: ${this.identity}`);
+    }
+    const mediaDir = `${E2B_WORKSPACE}/.opencode-router/media`;
+    await this.sandbox.commands.run(`mkdir -p ${mediaDir}`);
+    const entries = await Promise.all(
+      sourcePaths.map(async (src) => {
+        const dst = `${mediaDir}/${basename(src)}`;
+        const content = await readFile(src);
+        await this.sandbox!.files.write(dst, content as unknown as string);
+        return [src, dst] as const;
+      }),
+    );
+    return new Map(entries);
   }
 
   private runExclusive<T>(effect: Effect.Effect<T, unknown>): Promise<T> {
     return Effect.runPromise(this.mutex.withPermit(effect));
   }
 
-  private finalizeRuntimeEffect(
-    status: SandboxRuntime["status"],
-    dispose: boolean,
-  ): Effect.Effect<void> {
+  private clearRuntimeState(dispose: boolean): Effect.Effect<void> {
     return Effect.sync(() => {
       this.sandbox = null;
       this.client = null;
       this.baseUrl = "";
-      this.status = status;
       if (dispose) this.sandboxId = "";
       if (dispose) this.onDispose(this.identity, this);
     });
   }
 
-  private startEffect(): Effect.Effect<SandboxConnection, unknown> {
-    return Effect.suspend(() => {
-      const password = randomUUID().replace(/-/g, "").slice(0, 20);
-      const envs = buildSandboxEnvironment(password, this.cfg.secrets);
-      const self = this;
-      // Initialize host workspace/data directories (idempotent — both create and connect paths)
-      const hostPaths: WorkspacePaths = initFilesystem(self.identity, {
-        sandboxRoot: self.sandboxRoot,
-        secrets: self.cfg.secrets,
+  // ── Entry points: create vs reconnect ──────────────────────────────────
+
+  /**
+   * Create a brand-new sandbox from the configured template and wait for
+   * opencode (the sandbox main process) to become healthy.
+   */
+  private async createSandboxAsync(): Promise<SandboxConnection> {
+    this.logger?.info(
+      { template: this.cfg.template, identity: this.identity },
+      "creating new e2b sandbox",
+    );
+
+    if (this.cfg.hostMountEnabled) {
+      const hostPaths = initFilesystem(this.identity, {
+        workspaceRoot: this.cfg.hostMountWorkspaceRoot,
       });
-      self.workspaceHostPath = hostPaths.workspaceHostPath;
-      self.opencodeDataHostPath = hostPaths.opencodeDataHostPath;
-      this.logger?.info(
-        { template: this.cfg.template, apiUrl: this.cfg.apiUrl, sandboxId: this.sandboxId },
-        this.sandboxId ? "connect e2b sandbox" : "resolve e2b sandbox",
-      );
+      this.workspaceHostPath = hostPaths.workspaceHostPath;
+    }
 
-      /** Shared sandbox creation helper. */
-      function createSandbox() {
-        return Sandbox.create(self.cfg.template, {
-          apiKey: self.cfg.apiKey,
-          apiUrl: self.cfg.apiUrl,
-          timeoutMs: self.cfg.timeoutMs,
-          metadata: {
-            "opencode.identity": self.identity,
-            "opencode.sandboxName": self.sandboxName,
-            "host-mount": JSON.stringify([
-              { hostPath: self.workspaceHostPath, mountPath: "/workspace" },
-              { hostPath: self.opencodeDataHostPath, mountPath: "/data" },
-            ]),
-          },
-          envs,
-        });
-      }
+    const metadata: Record<string, string> = {
+      "opencode.identity": this.identity,
+    };
+    if (this.cfg.hostMountEnabled && this.workspaceHostPath) {
+      metadata["host-mount"] = JSON.stringify([
+        { hostPath: this.workspaceHostPath, mountPath: E2B_HOME },
+      ]);
+    }
 
-      /** Connect to an existing sandbox by id. */
-      function connectSandbox(sandboxId: string) {
-        return Sandbox.connect(sandboxId, {
-          apiKey: self.cfg.apiKey,
-          apiUrl: self.cfg.apiUrl,
-          timeoutMs: self.cfg.timeoutMs,
-        });
-      }
+    this.logger?.info(
+      {
+        template: this.cfg.template,
+        apiUrl: this.cfg.apiUrl,
+        metadata,
+        hostMountEnabled: this.cfg.hostMountEnabled,
+        workspaceHostPath: this.workspaceHostPath || null,
+        mountPath: E2B_HOME,
+        // NOTE: envs is passed here but the current CubeAPI version does NOT
+        // forward envs into the container.
+      },
+      "sandbox create params",
+    );
 
-      /** Look up existing sandbox for this identity via metadata query. */
-      async function findSandboxByIdentity(): Promise<Sandbox | null> {
-        self.logger?.info({ identity: self.identity }, "lookup e2b sandbox by metadata");
-        const domain = self.cfg.apiUrl ? new URL(self.cfg.apiUrl).host : undefined;
-        const paginator = Sandbox.list({
-          apiKey: self.cfg.apiKey,
-          ...(domain ? { domain } : {}),
-          query: {
-            metadata: { "opencode.identity": self.identity },
-            state: ["running", "paused"],
-          },
-          limit: 1,
-        });
-        const items = await paginator.nextItems();
-        if (items.length > 0) {
-          self.logger?.info({ sandboxId: items[0].sandboxId, state: items[0].state }, "found e2b sandbox via metadata");
-          return connectSandbox(items[0].sandboxId);
-        }
-        return null;
-      }
-
-      /** Try metadata query first, then create new if nothing found. */
-      async function findOrCreate(): Promise<Sandbox> {
-        const found = await findSandboxByIdentity();
-        if (found) return found;
-        return createSandbox();
-      }
-
-      const sandboxEffect = this.sandboxId
-        ? Effect.tryPromise(async () => {
-            const sandboxId = this.sandboxId;
-            const presence = await inspectE2BSandbox(sandboxId, this.cfg);
-            if (!presence.exists) {
-              self.logger?.warn({ sandboxId }, "stale e2b sandbox missing; trying metadata query");
-              self.sandboxId = "";
-              return findOrCreate();
-            }
-            self.logger?.info({ sandboxId, state: presence.state }, "connect existing e2b sandbox");
-            return connectSandbox(sandboxId);
-          })
-        : Effect.tryPromise(() => findOrCreate());
-
-      return sandboxEffect.pipe(
-        Effect.flatMap((sb) =>
-          this.ensureWorkspaceFilesEffect(sb).pipe(
-            Effect.andThen(() =>
-              Effect.sync(() => {
-              const handle = this.startOpencodeProcessEffect(sb);
-              this.sandbox = sb;
-              this.sandboxId = sb.sandboxId;
-              this.image = this.cfg.template;
-              this.hostPort = 0;
-              this.guestPort = this.cfg.opencodePort ?? OPENCODE_GUEST_PORT;
-              this.serverPassword = password;
-              this.baseUrl = `https://${sb.getHost(this.guestPort)}`;
-              this.status = "starting";
-              this.lastActivityAt = Date.now();
-              this.lastHealthCheckAt = Date.now();
-              this.createdAt = Date.now();
-              this.done = this.monitorOpencode(sb, handle);
-
-              // Persist sandbox to DB for session-independent lifecycle tracking
-              {
-                const [ch, id, pk] = self.identity.split(":");
-                self.cfg.store?.upsertSandbox(ch, id, pk, sb.sandboxId, "running", self.workspaceHostPath, self.opencodeDataHostPath);
-              }
-
-              const client = createOpencodeServerClient(0, password, this.baseUrl);
-              this.client = client;
-              return { client, sb };
-              }),
-            ),
-            Effect.flatMap(({ client, sb }) =>
-              this.readyEffect(client).pipe(Effect.tapError(() => this.crashEffect(sb))),
-            ),
-          ),
-        ),
-      );
+    const sb = await Sandbox.create(this.cfg.template, {
+      apiKey: this.cfg.apiKey,
+      apiUrl: this.cfg.apiUrl,
+      metadata,
+      envs: buildSandboxEnvironment(this.cfg.secrets),
     });
+    this.logger?.info({ sandboxId: sb.sandboxId }, "e2b sandbox created");
+
+    await Effect.runPromise(this.writeWorkspaceFilesEffect(sb));
+    this.attachSandboxState(sb);
+    this.resetSession();
+    const conn = await this.attachAndAwaitOpencode(sb);
+    return conn;
   }
 
-  private ensureWorkspaceFilesEffect(sb: Sandbox): Effect.Effect<void, unknown> {
+  /**
+   * Reconnect to the sandbox identified by `this.sandboxId`.
+   * Falls back to createSandboxAsync if the sandbox is gone.
+   */
+  private async reconnectSandboxAsync(): Promise<SandboxConnection> {
+    const sid = this.sandboxId;
+    this.logger?.info(
+      { sandboxId: sid },
+      "reconnecting to existing e2b sandbox",
+    );
+
+    // Verify the sandbox still exists on the provider.
+    const presence = await inspectE2BSandbox(sid, this.cfg);
+    if (!presence.exists) {
+      this.logger?.warn(
+        { sandboxId: sid },
+        "sandbox no longer exists; falling back to create",
+      );
+      this.sandboxId = "";
+      return this.createSandboxAsync();
+    }
+
+    // Attach to the running sandbox.
+    let sb: Sandbox;
+    try {
+      sb = await Sandbox.connect(sid, {
+        apiKey: this.cfg.apiKey,
+        apiUrl: this.cfg.apiUrl,
+        timeoutMs: this.cfg.timeoutMs,
+      });
+    } catch (err) {
+      if (isMissingkilldSandboxError(err)) {
+        this.logger?.warn(
+          { sandboxId: sid },
+          "connect failed: sandbox dead; falling back to create",
+        );
+        this.sandboxId = "";
+        return this.createSandboxAsync();
+      }
+      throw err;
+    }
+
+    // Confirm the sandbox is actually running.
+    const running = await sb.isRunning().catch(() => false);
+    if (!running) {
+      this.logger?.warn(
+        { sandboxId: sid },
+        "sandbox not running; falling back to create",
+      );
+      this.sandboxId = "";
+      return this.createSandboxAsync();
+    }
+
+    this.logger?.info({ sandboxId: sid }, "sandbox reachable; waiting for opencode");
+
+    this.attachSandboxState(sb);
+    await Effect.runPromise(this.writeWorkspaceFilesEffect(sb));
+    const conn = await this.attachAndAwaitOpencode(sb);
+    return conn;
+  }
+
+  // ── Shared post-setup: wait for opencode ready ────────────────────────
+
+  /**
+   * Wait until the opencode process (started automatically by the sandbox
+   * template as the main process) becomes healthy.
+   * We never launch opencode ourselves — the sandbox image owns that.
+   */
+  private attachAndAwaitOpencode(sb: Sandbox): Promise<SandboxConnection> {
+    const client = createOpencodeServerClient(0, this.baseUrl, E2B_WORKSPACE);
+    this.client = client;
+    // done resolves immediately — opencode lifecycle is tied to the sandbox
+    this.done = Promise.resolve();
+    this.logger?.info(
+      { sandboxId: sb.sandboxId, baseUrl: this.baseUrl },
+      "waiting for opencode (sandbox main process)",
+    );
+
+    return Effect.runPromise(
+      this.readyEffect(client).pipe(
+        Effect.tapError(() => this.crashEffect(sb)),
+      ),
+    );
+  }
+
+  /** Bind in-memory runtime fields to the connected sandbox handle. */
+  private attachSandboxState(sb: Sandbox): void {
+    this.sandbox = sb;
+    this.sandboxId = sb.sandboxId;
+    this.template = this.cfg.template;
+    this.hostPort = 0;
+    this.guestPort = this.cfg.opencodePort;
+    this.baseUrl = `https://${sb.getHost(this.guestPort)}`;
+    this.lastActivityAt = Date.now();
+    this.lastHealthCheckAt = Date.now();
+    this.createdAt = Date.now();
+
+    // Persist sandbox info to DB.
+    const [ch, id, pk] = this.identity.split(":");
+    this.cfg.store?.upsertSandbox(
+      ch,
+      id,
+      pk,
+      sb.sandboxId,
+      "running",
+      this.workspaceHostPath,
+      "",
+    );
+  }
+
+  /** Drop persisted session data after creating a fresh sandbox. */
+  private resetSession(): void {
+    const [ch, id, pk] = this.identity.split(":");
+    this.cfg.store?.clearSession(ch, id, pk);
+  }
+
+  private writeWorkspaceFilesEffect(
+    sb: Sandbox,
+  ): Effect.Effect<void, unknown> {
     return Effect.suspend(() => {
-      const dirs = [
-        E2B_OPENCODE_PATHS.dataDir,
-        E2B_OPENCODE_PATHS.configDir,
-        E2B_OPENCODE_PATHS.stateDir,
-        E2B_OPENCODE_PATHS.cacheDir,
-        "/workspace",
-      ];
+      this.logger?.info(
+        { sandboxId: sb.sandboxId },
+        "workspace files: start setup",
+      );
 
       const auth: Record<string, { type: "api"; key: string }> = {};
       for (const s of this.cfg.secrets) {
@@ -381,73 +469,57 @@ class E2BSandboxInstance implements SandboxRuntime {
         if (provider && s.value) auth[provider] = { type: "api", key: s.value };
       }
 
-      // Always create directories first (idempotent)
-      return Effect.tryPromise(() => sb.commands.run(`mkdir -p ${dirs.join(" ")}`)).pipe(
-        Effect.andThen(
-          Effect.tryPromise(async () => {
-            // Check if AGENTS.md exists via sb.files.read.
-            // If it does, host-mount is working — skip file writes.
-            try {
-              await sb.files.read("/workspace/AGENTS.md");
-              return; // File exists — skip writes
-            } catch {
-              // File doesn't exist — fall back to writing template files
-            }
+      return Effect.tryPromise(async () => {
+        // auth.json: opencode reads on every auth lookup (no cache).
+        if (Object.keys(auth).length > 0) {
+          await sb.files.write(
+            E2B_OPENCODE_PATHS.authJson,
+            JSON.stringify(auth, null, 2) + "\n",
+          );
+        }
 
-            if (Object.keys(auth).length > 0) {
-              await sb.files.write(
-                E2B_OPENCODE_PATHS.authJson,
-                JSON.stringify(auth, null, 2) + "\n",
-              );
-            }
-            await sb.files.write(
-              E2B_OPENCODE_PATHS.opencodeJson,
-              buildOpencodeAgentJson() + "\n",
-            );
-            await sb.files.write("/workspace/AGENTS.md", agentsMd);
-            await sb.files.write("/workspace/TOOLS.md", toolsMd);
-            await sb.files.write("/workspace/MEMORY.md", memoryMd);
-          }),
-        ),
-      );
+        // opencode.json: written on every ensure() so config is always current.
+        await sb.files.write(
+          E2B_OPENCODE_PATHS.opencodeJson,
+          buildOpencodeAgentJson(this.cfg.config) + "\n",
+        );
+
+        // Template files — only write if absent (persists user edits across restarts).
+        for (const [name, content] of [
+          ["AGENTS.md", agentsMd],
+          ["TOOLS.md", toolsMd],
+          ["MEMORY.md", memoryMd],
+        ] as const) {
+          const p = `${E2B_WORKSPACE}/${name}`;
+          if (!(await sb.files.exists(p))) await sb.files.write(p, content);
+        }
+
+        this.logger?.info({ sandboxId: sb.sandboxId }, "workspace files ready");
+      });
     });
-  }
-
-  private startOpencodeProcessEffect(sb: Sandbox): Promise<CommandHandle> {
-    this.logger?.info("exec e2b opencode serve");
-    return sb.commands.run(
-        [
-          "opencode",
-          "serve",
-          "--hostname",
-          "0.0.0.0",
-          "--port",
-          String(this.guestPort),
-          "--log-level",
-          "ERROR",
-        ].join(" "),
-        {
-          background: true,
-          cwd: "/workspace",
-          user: "user",
-          timeoutMs: 0,
-          requestTimeoutMs: 0,
-        },
-    );
   }
 
   private readyEffect(
     client: OpencodeClient,
   ): Effect.Effect<SandboxConnection, unknown> {
     this.logger?.info({ baseUrl: this.baseUrl }, "wait e2b opencode ready");
-    return Effect.tryPromise(() => waitForOpenCodeReady(client)).pipe(
+    return Effect.tryPromise(() =>
+      waitForOpenCodeReady(client, E2B_WORKSPACE, this.logger),
+    ).pipe(
       Effect.andThen(
         Effect.sync(() => {
           this.lastHealthCheckAt = Date.now();
           this.lastActivityAt = Date.now();
-          this.status = "running";
-          this.logger?.info({ baseUrl: this.baseUrl }, "e2b opencode ready");
-          return this.buildConnection();
+          this.logger?.info(
+            {
+              sandboxId: this.sandboxId,
+              baseUrl: this.baseUrl,
+              status: "running",
+            },
+            "sandbox status => running (opencode ready)",
+          );
+          void this.sandbox?.setTimeout(this.cfg.timeoutMs).catch(() => {});
+          return this.connection();
         }),
       ),
     );
@@ -455,53 +527,21 @@ class E2BSandboxInstance implements SandboxRuntime {
 
   private crashEffect(sb: Sandbox): Effect.Effect<void, never> {
     return Effect.ignore(Effect.tryPromise(() => sb.kill())).pipe(
-      Effect.andThen(Effect.sync(() => this.logger?.error("e2b startup crashed"))),
-      Effect.andThen(() => this.finalizeRuntimeEffect("crashed", true)),
+      Effect.andThen(
+        Effect.sync(() => this.logger?.error("e2b startup crashed")),
+      ),
+      Effect.andThen(() => this.clearRuntimeState(true)),
     );
   }
 
-  private async monitorOpencode(sb: Sandbox, handle: Promise<CommandHandle>): Promise<void> {
-    let status: SandboxRuntime["status"] = "stopped";
-    try {
-      const commandHandle = await handle;
-      const result = await commandHandle.wait().catch((err) => {
-        if (typeof err === "object" && err !== null && "exitCode" in err) {
-          return err as { exitCode: number };
-        }
-        throw err;
-      });
-      status = result.exitCode === 0 ? "stopped" : "crashed";
-      this.logger?.info(
-        { identity: this.identity, exitCode: result.exitCode },
-        "e2b opencode exited",
-      );
-    } catch (err) {
-      status = "crashed";
-      this.logger?.warn({ err }, "e2b opencode monitor failed");
-    } finally {
-      await Effect.runPromise(
-        Effect.sync(() => {
-          const [ch, id, pk] = this.identity.split(":");
-          this.cfg.store?.deleteSandbox(ch, id, pk);
-        }).pipe(
-          Effect.andThen(Effect.ignore(Effect.tryPromise(() => sb.pause()))),
-          Effect.andThen(() => this.finalizeRuntimeEffect(status, false)),
-        ),
-      );
-    }
-  }
-
-  private buildConnection(): SandboxConnection {
-    this.lastActivityAt = Date.now();
-    void this.sandbox?.setTimeout(this.cfg.timeoutMs).catch(() => {});
+  private connection(): SandboxConnection {
     return {
       sandboxName: this.sandboxName,
       sandboxId: this.sandboxId,
+      directory: E2B_WORKSPACE,
       baseUrl: this.baseUrl,
       hostPort: 0,
-      client:
-        this.client ??
-        createOpencodeServerClient(0, this.serverPassword, this.baseUrl),
+      client: this.client!,
       release: async () => {},
     };
   }
@@ -544,9 +584,15 @@ export class E2BSandboxManager implements OpenCodeSandboxManager {
     }
   }
 
-  async ensureRuntime(identity: string, sandboxId?: string | null): Promise<SandboxConnection> {
+  async ensureRuntime(
+    identity: string,
+    sandboxId?: string | null,
+  ): Promise<SandboxConnection> {
     this.prepareEnvironment();
-    this.cfg.logger?.info({ identity, sandboxId: sandboxId ?? null }, "ensure e2b sandbox runtime");
+    this.cfg.logger?.info(
+      { identity, sandboxId: sandboxId ?? null },
+      "ensure e2b sandbox runtime",
+    );
     let instance = this.instances.get(identity);
     if (!instance) {
       instance = this.createInstance(identity);
@@ -594,5 +640,4 @@ export class E2BSandboxManager implements OpenCodeSandboxManager {
       await instance.stop("manual");
     }
   }
-
 }

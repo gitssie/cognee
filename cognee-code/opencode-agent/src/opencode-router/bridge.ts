@@ -15,14 +15,13 @@ import { createBridgeRuntime, type BridgePaths } from "./bridge-runtime.js";
 import { BridgeHealthController } from "./bridge-health.js";
 import { createBridgeCommandRouter } from "./bridge-command.js";
 import { createBridgeMessagePipeline, type BridgeMessagePipeline } from "./bridge-message-pipeline.js";
-import { BridgeSessionRuntime, type SessionRunState } from "./bridge-session.js";
+import { BridgeSessionRuntime } from "./bridge-session.js";
 import { AdapterRegistry, startAdapterBounded, type BridgeAdapter as Adapter } from "./bridge-adapters.js";
 import { ChannelRegistry, PluginChannel, SlackChannel, TelegramChannel } from "./bridge-channel.js";
 import { createDirectoryPolicy } from "./bridge-directory.js";
 import { BridgeMediaFlow } from "./bridge-media.js";
 import { createBridgePluginGateway } from "./bridge-plugin-gateway.js";
 import { createBridgeAdminHandlers } from "./bridge-admin-handlers.js";
-import { createOpencodeInstance } from "./opencode-instance.js";
 import { formatInputSummary } from "./text.js";
 
 type OutboundKind = "reply" | "system" | "tool";
@@ -59,6 +58,8 @@ export type BridgeDeps = {
     };
     /** Sandbox manager that receives the store for DB lifecycle tracking. */
     sandboxManager?: { setStore(store: BridgeStore): void };
+    /** Names of agents available in the OpenCode server (used to validate per-account agent config). */
+    availableAgents?: string[];
 };
 
 export type BridgeReporter = {
@@ -95,7 +96,7 @@ type ModelRef = {
     modelID: string;
 };
 
-type RunState = SessionRunState;
+
 /*type RunState = {
     key: string;
     directory: string;
@@ -142,23 +143,11 @@ export async function startBridge(
         paths: deps.paths,
         mediaStore: deps.mediaStore,
     });
-    const defaultDirectory = "";
     const { workspaceRoot } = runtime.paths;
     const { mediaStore } = runtime;
 
-    let messagePipeline: BridgeMessagePipeline | null = null;
-    const pluginInboundHandler = async (message: InboundMessage) => {
-        if (!messagePipeline) throw new Error("Bridge message pipeline not initialized");
-        await messagePipeline.handleInbound(message);
-    };
-
     const provider = deps.provider;
-    const instance = createOpencodeInstance({
-        provider,
-        config,
-        sandboxEnabled: provider.kind === "sandbox",
-    });
-    const directoryPolicy = createDirectoryPolicy({ config, workspaceRoot, logger, instance });
+    const directoryPolicy = createDirectoryPolicy({ config, workspaceRoot, logger, provider });
     const isDangerousRootDirectory = directoryPolicy.isDangerousRootDirectory;
     const resolveIdentityDirectoryStr = directoryPolicy.resolveIdentityDirectory;
 
@@ -170,16 +159,8 @@ export async function startBridge(
     };
     const store = deps.store ?? new BridgeStore(config.dbPath);
     deps.sandboxManager?.setStore(store);
-    const pluginGateway = await createBridgePluginGateway({
-        config,
-        logger,
-        mediaStore,
-        handleInbound: pluginInboundHandler,
-        adapterKey,
-    });
-    const pluginHosts = pluginGateway.hosts;
-    const pluginIdentities = pluginGateway.identities;
-    const pluginLoadResult = pluginGateway;
+    const pluginHosts = new Map<string, any>();
+    const pluginIdentities = new Map<string, Map<string, { id: string; enabled: boolean; directory?: string; fingerprint?: string }>>();
 
     logger.debug(
         {
@@ -208,120 +189,23 @@ export async function startBridge(
     const usingInjectedAdapters = Boolean(deps.adapters);
 
     for (const adapter of adapters.values()) {
-        channels.set(new PluginChannel(instance, adapter));
-    }
-
-    if (!usingInjectedAdapters) {
-        const enabledTelegram = config.telegramBots.filter(
-            (bot) => bot.enabled !== false,
-        );
-        if (enabledTelegram.length === 0) {
-            logger.info("telegram adapters disabled");
-            reportStatus?.("Telegram adapters disabled.");
-        }
-        for (const bot of enabledTelegram) {
-            logger.debug({ identityId: bot.id }, "telegram adapter enabled");
-            const channel = new TelegramChannel(instance, {
-                identity: bot,
-                config,
-                logger,
-                store,
-                mediaStore,
-                directoryPolicy,
-                adapterKey,
-                handleInbound,
-                sendText,
-            });
-            channels.set(channel);
-            adapters.set(channel.key, channel.asAdapter());
-        }
-
-        const enabledSlack = config.slackApps.filter(
-            (app) => app.enabled !== false,
-        );
-        if (enabledSlack.length === 0) {
-            logger.info("slack adapters disabled");
-            reportStatus?.("Slack adapters disabled.");
-        }
-        for (const app of enabledSlack) {
-            logger.debug({ identityId: app.id }, "slack adapter enabled");
-            const channel = new SlackChannel(instance, {
-                identity: app,
-                config,
-                logger,
-                mediaStore,
-                adapterKey,
-                handleInbound,
-            });
-            channels.set(channel);
-            adapters.set(channel.key, channel.asAdapter());
-        }
-
-        if (config.channels.every((account) => account.enabled === false)) {
-            logger.info("channel adapters disabled");
-            reportStatus?.("Channel adapters disabled.");
-        }
-        for (const [name, host] of pluginLoadResult.hosts.entries()) {
-            pluginHosts.set(name, host);
-            logger.info(
-                {
-                    pluginId: host.id,
-                    channels: host.channels,
-                    tools: host.toolNames,
-                    routeCount: host.routes.length,
-                    hookCount: host.hooks.length,
-                },
-                `${name} plugin host ready`,
-            );
-        }
-        for (const [
-            channel,
-            identities,
-        ] of pluginLoadResult.identities.entries()) {
-            pluginIdentities.set(channel, identities);
-        }
-        for (const adapter of pluginLoadResult.adapters) {
-            logger.debug(
-                { identityId: adapter.identityId, channel: adapter.name },
-                "plugin adapter enabled",
-            );
-            const channel = new PluginChannel(instance, adapter);
-            channels.set(channel);
-            adapters.set(channel.key, channel.asAdapter());
-        }
+        channels.set(new PluginChannel(adapter));
     }
 
     const sessionRuntime = new BridgeSessionRuntime({
         logger,
         config,
         store,
-        instance,
+        provider,
         reportStatus,
         getChannelLabel,
         formatPeer: (_channel, peerId) => peerId,
-        getAdapter: (key) => adapters.get(key),
     });
     const formatPeer = (_channel: ChannelName, peerId: string) => peerId;
 
     const normalizeDirectory = directoryPolicy.normalizeDirectory;
     const resolveScopedDirectory = directoryPolicy.resolveScopedDirectory;
     const workspaceRootNormalized = normalizeDirectory(workspaceRoot);
-
-    const reportThinking = (run: RunState) => {
-        sessionRuntime.reportThinking(run);
-    };
-
-    const reportDone = (run: RunState) => {
-        sessionRuntime.reportDone(run);
-    };
-
-    const startTyping = (run: RunState) => {
-        sessionRuntime.startTyping(run);
-    };
-
-    const stopTyping = (key: string) => {
-        sessionRuntime.stopTyping(key);
-    };
 
     const runtimeState = runtime.state;
 
@@ -376,8 +260,8 @@ export async function startBridge(
         workspaceRoot,
         workspaceRootNormalized,
         pluginIdentities,
-        pluginExtraRequestHandlers: pluginLoadResult.extraRequestHandlers,
-        pluginRouteHandlers: pluginLoadResult.pluginRouteHandlers,
+        pluginExtraRequestHandlers: [],
+        pluginRouteHandlers: [],
         sandboxHandlers: deps.sandboxHandlers,
         agentConfigHandlers: deps.agentConfigHandlers,
         adapterKey,
@@ -431,7 +315,6 @@ export async function startBridge(
     const commandRouter = createBridgeCommandRouter({
         store,
         logger,
-        defaultDirectory,
         workspaceRoot,
         channels,
         sendText,
@@ -440,13 +323,6 @@ export async function startBridge(
         stopActiveRun: (input) => sessionRuntime.abortSession(input),
         compactSession: (input) => sessionRuntime.compactSession(input),
     });
-
-    async function handleInbound(message: InboundMessage) {
-        if (!messagePipeline) {
-            throw new Error("Bridge message pipeline not initialized");
-        }
-        await messagePipeline.handleInbound(message);
-    }
 
     async function handleCommand(
         channel: ChannelName,
@@ -458,18 +334,16 @@ export async function startBridge(
         return commandRouter.route({ channel, identityId, peerKey, peerId, text });
     }
 
-    messagePipeline = createBridgeMessagePipeline({
+    const messagePipeline = createBridgeMessagePipeline({
         logger,
         config,
         reporter,
         store,
-        instance,
+        provider,
         mediaStore,
         channels,
         pluginIdentities,
-        defaultDirectory,
         directoryPolicy,
-        adapterKey,
         hasAdapter: (channel, identityId) => adapters.has(adapterKey(channel, identityId)),
         recordInboundActivity: (now) => runtimeState.recordInboundActivity(now),
         resolveIdentityDirectory: resolveIdentityDirectoryStr,
@@ -479,11 +353,40 @@ export async function startBridge(
         handleCommand,
         sendText,
         sessionRuntime,
-        reportThinking,
-        reportDone,
-        startTyping,
-        stopTyping,
+        availableAgents: deps.availableAgents,
     });
+
+    const pluginGateway = await createBridgePluginGateway({
+        config,
+        logger,
+        mediaStore,
+        handleInbound: (message) => messagePipeline.handleInbound(message),
+        adapterKey,
+    });
+    for (const [name, host] of pluginGateway.hosts.entries()) {
+        pluginHosts.set(name, host);
+        logger.info(
+            {
+                pluginId: host.id,
+                channels: host.channels,
+                tools: host.toolNames,
+                routeCount: host.routes.length,
+                hookCount: host.hooks.length,
+            },
+            `${name} plugin host ready`,
+        );
+    }
+    for (const [channel, identities] of pluginGateway.identities.entries()) {
+        pluginIdentities.set(channel, identities);
+    }
+    for (const adapter of pluginGateway.adapters) {
+        logger.debug({ identityId: adapter.identityId, channel: adapter.name }, "plugin adapter enabled");
+        const channel = new PluginChannel(adapter);
+        channels.set(channel);
+        adapters.set(channel.key, channel.asAdapter());
+    }
+
+    await pluginGateway.startGateways();
 
     for (const adapter of Array.from(adapters.values())) {
         const startResult = await startAdapterBounded(adapter, {
@@ -534,43 +437,12 @@ export async function startBridge(
     return {
         async stop() {
             healthController.stop();
-            sessionRuntime.stopAllTyping();
             for (const adapter of adapters.values()) {
                 await adapter.stop();
             }
             store.close();
-            await instance.shutdown();
+            await provider.shutdown();
             await delay(50);
-        },
-        async dispatchInbound(message: {
-            channel: ChannelName;
-            identityId?: string;
-            peerId: string;
-            text?: string;
-            parts?: InboundMessagePart[];
-            raw?: unknown;
-            fromMe?: boolean;
-        }) {
-            const identityId =
-                (message.identityId ?? "default").trim() || "default";
-            await handleInbound({
-                channel: message.channel,
-                identityId,
-                peerId: message.peerId,
-                text: message.text ?? "",
-                ...(Array.isArray(message.parts)
-                    ? { parts: message.parts }
-                    : {}),
-                raw: message.raw ?? null,
-                fromMe: message.fromMe,
-            });
-
-            await sessionRuntime.waitForSessionIdle({
-                channel: message.channel,
-                identityId,
-                peerKey: message.peerId,
-                defaultDirectory,
-            });
-        },
+        }
     };
 }

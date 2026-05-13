@@ -1,20 +1,28 @@
 /**
  * Workspace and OpenCode data path resolution for per-user sandboxes.
  *
- * OpenCode state uses XDG environment variables to redirect all state under
- * a single /data mount point, avoiding IRQ exhaustion from too many volumes.
+ * Host-mount path:   join(workspaceRoot, safePeer)  →  /home/user  (E2B_HOME)
+ * Workspace inside:  /home/user/workspace           (E2B_WORKSPACE)
+ *
+ * When host-mount is enabled, the entire /home/user directory is backed by
+ * the host. This means opencode's config/data dirs live on the host:
+ *   /home/user/.config/opencode/opencode.json
+ *   /home/user/.local/share/opencode/auth.json
+ *
+ * These files can be pre-populated on the host before (or between) sandbox
+ * runs, making configuration injection reliable across restarts.
+ *
+ * Router alignment:  workspaceRoot = join(router.rootDir, router.workspaceDir)
+ *                    = same root as provisionPeerDirectory() in directory.ts
  */
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { publish, WorkspaceInit } from "../events";
-import type { ProviderSecret } from "./types";
+import type { Config } from "../opencode-router/config.js";
 
 export interface WorkspacePaths {
     /** Host path mounted as /workspace inside the sandbox. */
     workspaceHostPath: string;
-    /** Host path mounted as /data inside the sandbox.
-     *  XDG vars map opencode state under /data/.local/share, /.cache, etc. */
-    opencodeDataHostPath: string;
 }
 
 /** XDG env vars that redirect OpenCode state under /data. */
@@ -25,30 +33,35 @@ export const OPENCODE_XDG_ENV: Record<string, string> = {
     XDG_STATE_HOME: "/data/.local/state",
 };
 
-/** Guest path where auth.json lives (XDG_DATA_HOME/opencode/auth.json). */
-export const AUTH_JSON_GUEST_PATH = "/data/.local/share/opencode/auth.json";
 
 /**
- * Resolve host paths under a unified sandbox root:
- *   workspaceHostPath  = <sandboxRoot>/<sandboxName>/workspace  → /workspace
- *   opencodeDataHostPath = <sandboxRoot>/<sandboxName>/data     → /data
+ * Resolve host workspace path:
+ *   workspaceHostPath = join(workspaceRoot, safePeer)
+ *
+ * workspaceRoot is the per-peer workspace root, aligned with
+ * provisionPeerDirectory() in directory.ts — same formula,
+ * same naming (safePeer, no "opencode-" prefix).
  */
 export function resolveWorkspacePaths(
     identity: string,
-    sandboxRoot: string,
+    workspaceRoot: string,
 ): WorkspacePaths {
-    const sandboxName = buildSandboxName(identity);
-
-    const workspaceHostPath = resolve(sandboxRoot, sandboxName, "workspace");
-    const opencodeDataHostPath = resolve(sandboxRoot, sandboxName, "data");
-
-    assertWithinRoot(workspaceHostPath, sandboxRoot);
-    assertWithinRoot(opencodeDataHostPath, sandboxRoot);
-
-    mkdirSync(workspaceHostPath, { recursive: true });
-    mkdirSync(opencodeDataHostPath, { recursive: true });
-
-    return { workspaceHostPath, opencodeDataHostPath };
+    const peerKey = identity.split(":").pop() ?? identity;
+    const safePeer = sanitize(peerKey);
+    const workspaceHostPath = resolve(workspaceRoot, safePeer);
+    assertWithinRoot(workspaceHostPath, workspaceRoot);
+    // Pre-create the full directory tree so the sandbox user can write to them
+    // when the host directory is bind-mounted as /home/user.
+    for (const sub of [
+        "workspace",
+        ".config/opencode",
+        ".local/share/opencode",
+        ".local/state",
+        ".local/cache",
+    ]) {
+        mkdirSync(resolve(workspaceHostPath, sub), { recursive: true });
+    }
+    return { workspaceHostPath };
 }
 
 /** Replace unsafe characters and truncate to 64 chars. */
@@ -80,75 +93,46 @@ function assertWithinRoot(candidate: string, root: string): void {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Filesystem init — shared by both local SandboxManager and
-// HttpSandboxManager (MCP-based).
+// Filesystem init — shared by E2BSandboxManager.
 // ═══════════════════════════════════════════════════════════
 
-const API_KEY_PROVIDER: Record<string, string> = {
-    DEEPSEEK_API_KEY: "deepseek",
-    ANTHROPIC_API_KEY: "anthropic",
-    OPENAI_API_KEY: "openai",
-};
-
 /**
- * Read the `opencode` section from opencode-router.json and return it as-is.
- * Falls back to minimal defaults if the config file is missing.
+ * Serialize the `opencode` section from the already-parsed Config object.
+ * No filesystem reads — config was parsed once at startup.
  */
-export function buildOpencodeAgentJson(): string {
-  const configPath =
-    process.env.OPENCODE_ROUTER_CONFIG_PATH?.trim() ||
-    join(process.env.HOME ?? "/app", "opencode-router.json");
-  try {
-    const raw = readFileSync(configPath, "utf8");
-    const routerCfg = JSON.parse(raw);
-    if (routerCfg.opencode && typeof routerCfg.opencode === "object") {
-      return JSON.stringify(routerCfg.opencode, null, 2);
-    }
-  } catch {}
+export function buildOpencodeAgentJson(config: Config): string {
+  const opencode = (config.configFile as any).opencode;
+  if (opencode && typeof opencode === "object") {
+    return JSON.stringify(opencode, null, 2);
+  }
   return "{}";
 }
 
 export interface FilesystemInitConfig {
-    sandboxRoot: string;
-    secrets: ProviderSecret[];
+    /** Absolute workspace root — resolved from sandbox.hostMount.workspaceRoot
+     *  (relative to router.rootDir, default "workspaces"). */
+    workspaceRoot: string;
 }
 
 /**
- * Initialize host workspace & data directories for a sandbox identity.
- * Creates directory structure, writes auth.json + opencode.json,
- * and publishes WorkspaceInit for template seeding.
+ * Initialize host workspace directory for a sandbox identity.
+ * Creates directory structure and publishes WorkspaceInit for template seeding.
  *
- * @returns resolved host paths for workspace and data volumes
+ * Path:  join(workspaceRoot, safePeer)   ← same formula as provisionPeerDirectory()
+ *
+ * @returns resolved host path for workspace volume
  */
 export function initFilesystem(
     identity: string,
     config: FilesystemInitConfig,
 ): WorkspacePaths {
-    const paths = resolveWorkspacePaths(identity, config.sandboxRoot);
+    const paths = resolveWorkspacePaths(identity, config.workspaceRoot);
 
     // Trigger template seeding (AGENTS.md, TOOLS.md, MEMORY.md)
     publish(WorkspaceInit, {
         workspaceHostPath: paths.workspaceHostPath,
-        opencodeDataHostPath: paths.opencodeDataHostPath,
         identity,
     });
-
-    // auth.json
-    const auth: Record<string, { type: "api"; key: string }> = {};
-    for (const s of config.secrets) {
-        const p = API_KEY_PROVIDER[s.envName];
-        if (p && s.value) auth[p] = { type: "api", key: s.value };
-    }
-    if (Object.keys(auth).length > 0) {
-        const dir = `${paths.opencodeDataHostPath}/.local/share/opencode`;
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(`${dir}/auth.json`, JSON.stringify(auth, null, 2) + "\n");
-    }
-
-    // opencode.json
-    const cfgDir = `${paths.opencodeDataHostPath}/.config/opencode`;
-    mkdirSync(cfgDir, { recursive: true });
-    writeFileSync(`${cfgDir}/opencode.json`, buildOpencodeAgentJson() + "\n");
 
     return paths;
 }

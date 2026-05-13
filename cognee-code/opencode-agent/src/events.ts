@@ -25,7 +25,6 @@ export function defineEvent<T extends string, P>(type: T): EventDefinition<T, P>
 export interface WorkspaceInitPayload {
   identity: string;
   workspaceHostPath: string;
-  opencodeDataHostPath: string;
 }
 
 /** Fired when a workspace directory is initialized — triggers workspace capabilities. */

@@ -1,11 +1,10 @@
 /**
- * Unit tests for sandbox internals — no microsandbox VM required.
+ * Unit tests for sandbox internals — no E2B sandbox required.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { PortAllocator } from "../../../src/sandbox/port-allocator.js";
 import {
   initFilesystem,
   resolveWorkspacePaths,
@@ -14,47 +13,15 @@ import {
 } from "../../../src/sandbox/workspace.js";
 import { makeRuntime } from "../../../src/events.js";
 import { WorkspaceInitLive } from "../../../src/opencode-router/workspace-init.js";
-import { SandboxManager } from "../../../src/sandbox/manager.js";
 import { createSandboxClientProvider } from "../../../src/sandbox/sandbox-provider.js";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { OPENCODE_GUEST_PORT } from "../../../src/sandbox/opencode-client.js";
 import { buildSandboxEnvironment, SANDBOX_TIMEZONE } from "../../../src/sandbox/env.js";
 
 let testDir: string;
-let sandboxDir: string;
 
 beforeAll(() => {
   testDir = mkdtempSync(join(tmpdir(), "sandbox-ut-"));
-  sandboxDir = join(testDir, "sandboxes");
-});
-
-describe("PortAllocator", () => {
-  it("allocates ports sequentially", () => {
-    const alloc = new PortAllocator(42000, 42005);
-    expect(alloc.allocate()).toBe(42000);
-    expect(alloc.allocate()).toBe(42001);
-  });
-
-  it("reuses released ports", () => {
-    const alloc = new PortAllocator(42000, 42005);
-    alloc.allocate(); // 42000
-    alloc.allocate(); // 42001
-    alloc.release(42000);
-    expect(alloc.allocate()).toBe(42000);
-  });
-
-  it("allocates remaining ports correctly", () => {
-    const alloc = new PortAllocator(42000, 42005);
-    const allocated: number[] = [];
-    for (let i = 0; i < 6; i++) allocated.push(alloc.allocate());
-    expect(allocated.sort().join(",")).toBe("42000,42001,42002,42003,42004,42005");
-  });
-
-  it("throws when exhausted", () => {
-    const alloc = new PortAllocator(42000, 42000);
-    alloc.allocate();
-    expect(() => alloc.allocate()).toThrow();
-  });
 });
 
 describe("Workspace paths", () => {
@@ -78,21 +45,20 @@ describe("Workspace paths", () => {
   it("resolveWorkspacePaths returns correct host paths", () => {
     const root = join(testDir, "sandboxes");
     const paths = resolveWorkspacePaths("wecom:default:yinyousong", root);
-    const expectedWs = resolve(root, "opencode-yinyousong", "workspace");
-    const expectedSt = resolve(root, "opencode-yinyousong", "data");
+    const expectedWs = resolve(root, "yinyousong");
     expect(paths.workspaceHostPath).toBe(expectedWs);
-    expect(paths.opencodeDataHostPath).toBe(expectedSt);
   });
 
   it("resolveWorkspacePaths sanitizes path traversal", () => {
     const root = join(testDir, "sandboxes");
     const safePaths = resolveWorkspacePaths("../evil/user", root);
-    expect(safePaths.workspaceHostPath).toContain("opencode-evil-user");
+    expect(safePaths.workspaceHostPath).toContain("/user");
+    expect(safePaths.workspaceHostPath).not.toContain("..");
   });
 
   it("seeds workspace templates even when runtime starts after init", async () => {
     const root = join(testDir, "sandboxes-late-runtime");
-    const paths = initFilesystem("wecom:default:late-runtime", { sandboxRoot: root, secrets: [] });
+    const paths = initFilesystem("wecom:default:late-runtime", { workspaceRoot: root });
 
     const runtime = makeRuntime(WorkspaceInitLive as any);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -105,7 +71,7 @@ describe("Workspace paths", () => {
 
   it("does not overwrite existing workspace files while seeding", async () => {
     const root = join(testDir, "sandboxes-existing-files");
-    const paths = initFilesystem("wecom:default:existing-files", { sandboxRoot: root, secrets: [] });
+    const paths = initFilesystem("wecom:default:existing-files", { workspaceRoot: root });
     const agentsPath = join(paths.workspaceHostPath, "AGENTS.md");
     writeFileSync(agentsPath, "custom user content\n");
 
@@ -182,69 +148,6 @@ describe("Provider identity builder", () => {
 
   it("builds identity from telegram params", () => {
     expect(buildIdentity("telegram", "bot1", "123456")).toBe("telegram:bot1:123456");
-  });
-});
-
-describe("SandboxManager config validation", () => {
-  it("constructs with valid config and exposes expected methods", async () => {
-    const mgr = new SandboxManager({
-      sandboxRoot: join(testDir, "sandboxes"),
-      portStart: 100,
-      portEnd: 200,
-      idleTtlMs: 60000,
-      maxRuntimeMs: 300000,
-      opencodeImage: "ghcr.io/anomalyco/opencode:latest",
-      cpus: 2,
-      memoryMb: 512,
-      cleanupIntervalMs: 30000,
-      secrets: [
-        { envName: "DEEPSEEK_API_KEY", value: "sk-test", allowHosts: ["api.deepseek.com"] },
-      ],
-    });
-
-    expect(mgr.ensureRuntime).toBeFunction();
-    expect(mgr.listRuntimes).toBeFunction();
-    expect(mgr.stopRuntime).toBeFunction();
-    expect(mgr.removeRuntime).toBeFunction();
-    expect(mgr.cleanupIdleRuntimes).toBeFunction();
-    expect(mgr.startCleanupLoop).toBeFunction();
-    expect(mgr.shutdown).toBeFunction();
-  });
-
-  it("listRuntimes returns empty array initially", async () => {
-    const mgr = new SandboxManager({
-      sandboxRoot: join(testDir, "sandboxes"),
-      portStart: 100,
-      portEnd: 200,
-      idleTtlMs: 60000,
-      maxRuntimeMs: 300000,
-      opencodeImage: "ghcr.io/anomalyco/opencode:latest",
-      cpus: 2,
-      memoryMb: 512,
-      cleanupIntervalMs: 30000,
-      secrets: [],
-    });
-    const list = await mgr.listRuntimes();
-    expect(Array.isArray(list)).toBeTrue();
-    expect(list).toHaveLength(0);
-    await mgr.shutdown();
-  });
-
-  it("stopRuntime on nonexistent id does not throw", async () => {
-    const mgr = new SandboxManager({
-      sandboxRoot: join(testDir, "sandboxes"),
-      portStart: 100,
-      portEnd: 200,
-      idleTtlMs: 60000,
-      maxRuntimeMs: 300000,
-      opencodeImage: "ghcr.io/anomalyco/opencode:latest",
-      cpus: 2,
-      memoryMb: 512,
-      cleanupIntervalMs: 30000,
-      secrets: [],
-    });
-    await mgr.stopRuntime("nonexistent", "manual");
-    await mgr.shutdown();
   });
 });
 

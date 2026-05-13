@@ -17,7 +17,6 @@ export type BridgeCommandContext = {
 export type BridgeCommandRouterDeps = {
     store: BridgeStore;
     logger: Logger;
-    defaultDirectory: string;
     workspaceRoot: string;
     channels: ChannelRegistry;
     sendText(
@@ -84,8 +83,11 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
                 }
                 const directory =
                     session.directory?.trim() ||
-                    deps.resolveIdentityDirectory(channel, identityId) ||
-                    deps.defaultDirectory;
+                    deps.resolveIdentityDirectory(channel, identityId);
+                if (!directory) {
+                    await sendSystem(channel, identityId, peerId, "No workspace directory configured for this session.");
+                    return true;
+                }
                 await deps.stopActiveRun({
                     directory,
                     sessionID: session.session_id,
@@ -105,8 +107,11 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
                 }
                 const directory =
                     session.directory?.trim() ||
-                    deps.resolveIdentityDirectory(channel, identityId) ||
-                    deps.defaultDirectory;
+                    deps.resolveIdentityDirectory(channel, identityId);
+                if (!directory) {
+                    await sendSystem(channel, identityId, peerId, "No workspace directory configured for this session.");
+                    return true;
+                }
                 await deps.compactSession({
                     directory,
                     sessionID: session.session_id,
@@ -146,7 +151,7 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
                     const current =
                         binding?.directory?.trim() ||
                         deps.store.getSession(channel, identityId, peerKey)?.directory?.trim() ||
-                        deps.defaultDirectory;
+                        deps.resolveIdentityDirectory(channel, identityId);
                     await sendSystem(channel, identityId, peerId, `Current directory: ${current || "(none)"}`);
                     return true;
                 }

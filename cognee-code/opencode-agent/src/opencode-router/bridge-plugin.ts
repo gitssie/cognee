@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import type { ChannelName, Config, PluginOptions } from "./config.js";
+import type { PipelineInboundMessage } from "./bridge-message-pipeline.js";
 import type { ExtraRequestHandler } from "./health.js";
 import { MediaStore } from "./media-store.js";
 import { discoverBridgePluginCandidates, loadBridgePluginModule } from "./bridge-plugin-manifest.js";
@@ -68,14 +69,7 @@ export type BridgePluginContext = {
   mediaStore: MediaStore;
   handleInbound: (message: {
     channel: ChannelName;
-    identityId: string;
-    peerId: string;
-    text: string;
-    agentId?: string;
-    parts?: any[];
-    raw: unknown;
-    fromMe?: boolean;
-  }) => Promise<void>;
+  } & Omit<PipelineInboundMessage, "channel">) => Promise<void>;
   adapterKey: (channel: ChannelName, identityId: string) => string;
 };
 
@@ -85,6 +79,7 @@ export type BridgePluginLoadResult = {
   extraRequestHandlers: ExtraRequestHandler[];
   pluginRouteHandlers: RegisteredRouteHandler[];
   identities: Map<string, Map<string, BridgeIdentityRecord>>;
+  startGateways(): Promise<void>;
 };
 
 type RouterPluginModule = {
@@ -114,6 +109,7 @@ export async function loadBridgePluginRegistry(context: BridgePluginContext): Pr
   const extraRequestHandlers: ExtraRequestHandler[] = [];
   const pluginRouteHandlers: RegisteredRouteHandler[] = [];
   const identities = new Map<string, Map<string, BridgeIdentityRecord>>();
+  const gatewayStarters: Array<() => void> = [];
   const candidates = await discoverBridgePluginCandidates(context.config, context.logger);
 
   // Create the shared channel runtime backed by router infrastructure
@@ -213,9 +209,11 @@ export async function loadBridgePluginRegistry(context: BridgePluginContext): Pr
             abortSignal: abortController.signal,
             setStatus: (_status: Record<string, unknown>) => {},
           };
-          context.logger.info({ channel, accountId }, "starting channel account gateway");
-          cp.gateway!.startAccount(accountCtx).catch((err: unknown) => {
-            context.logger.warn({ err, channel, accountId }, "channel gateway start error");
+          gatewayStarters.push(() => {
+            context.logger.info({ channel, accountId }, "starting channel account gateway");
+            cp.gateway!.startAccount(accountCtx).catch((err: unknown) => {
+              context.logger.warn({ err, channel, accountId }, "channel gateway start error");
+            });
           });
 
           // Synthesize a BridgeAdapter for each channel account so that
@@ -275,6 +273,9 @@ export async function loadBridgePluginRegistry(context: BridgePluginContext): Pr
     extraRequestHandlers,
     pluginRouteHandlers,
     identities,
+    async startGateways() {
+      for (const start of gatewayStarters) start();
+    },
   };
 }
 

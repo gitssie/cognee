@@ -18,7 +18,7 @@ export function createSandboxClientProvider(manager: OpenCodeSandboxManager): Op
     async getClientForSession({ channel, identityId, peerKey, sandboxId }): Promise<ClientHandle> {
       const identity = buildIdentity(channel, identityId, peerKey);
       const conn = await manager.ensureRuntime(identity, sandboxId);
-      return { client: conn.client, sandboxId: conn.sandboxId, release: conn.release };
+      return conn;
     },
 
     async getHealth(): Promise<ProviderHealth> {

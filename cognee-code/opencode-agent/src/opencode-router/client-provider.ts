@@ -14,6 +14,8 @@ import { OpencodeClient } from "@opencode-ai/sdk/v2";
 export interface ClientHandle {
     /** Use this client for session operations (prompt, abort, compact, etc.). */
     client: OpencodeClient; // OpencodeClient — opaque to avoid cross-node_modules type mismatch
+    /** Directory visible to this OpenCode client. Sandbox providers should use the guest directory. */
+    directory: string;
     /** Provider sandbox ID, e.g. E2B sandboxId. */
     sandboxId?: string;
     /** Release the handle when done. */

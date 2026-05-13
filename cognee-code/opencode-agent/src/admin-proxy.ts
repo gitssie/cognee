@@ -88,34 +88,26 @@ export function startAdminProxy(
     try {
       // ensureRuntime creates the sandbox on first call, reuses on subsequent.
       console.log(`[admin-proxy] ensure admin sandbox start`);
-      await manager.ensureRuntime(ADMIN_IDENTITY);
-      console.log(`[admin-proxy] ensure admin sandbox done`);
-
-      // Fetch runtime info for auth password.
-      const rt = await manager.getRuntime(ADMIN_IDENTITY);
-      console.log(`[admin-proxy] runtime status=${rt?.status ?? "missing"} port=${rt?.hostPort ?? "missing"}`);
-      if (!rt?.serverPassword || !rt?.hostPort) {
+      const conn = await manager.ensureRuntime(ADMIN_IDENTITY);
+      console.log(`[admin-proxy] ensure admin sandbox done, baseUrl=${conn.baseUrl}`);
+      if (!conn.baseUrl) {
         res.writeHead(502, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Admin sandbox not available" }));
         return;
       }
 
-      const targetUrl = `http://127.0.0.1:${rt.hostPort}${req.url}`;
+      const targetUrl = `${conn.baseUrl}${req.url}`;
       console.log(`[admin-proxy] forward ${req.method} ${targetUrl}`);
-      const basicAuth =
-        "Basic " +
-        Buffer.from(`opencode:${rt.serverPassword}`).toString("base64");
 
       // ── Build forward headers ──────────────────────────────
       const forwardHeaders: Record<string, string> = {};
       for (const [key, val] of Object.entries(req.headers)) {
         const lower = key.toLowerCase();
-        if (lower === "host" || lower === "authorization") continue;
+        if (lower === "host") continue;
         if (HOP_BY_HOP.has(lower)) continue;
         if (typeof val === "string") forwardHeaders[lower] = val;
         else if (Array.isArray(val)) forwardHeaders[lower] = val.join(", ");
       }
-      forwardHeaders["authorization"] = basicAuth;
 
       // ── Read request body ──────────────────────────────────
       const chunks: Buffer[] = [];

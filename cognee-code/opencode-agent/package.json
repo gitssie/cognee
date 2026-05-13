@@ -28,6 +28,7 @@
         "microsandbox": "^0.4.0",
         "openclaw": "file:./src/opencode-router/shims/openclaw",
         "pino": "^9.6.0",
+        "pino-pretty": "^13.1.3",
         "xdg-basedir": "^5.1.0",
         "zod": "^4.3.6"
     },

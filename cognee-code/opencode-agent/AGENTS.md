@@ -45,6 +45,30 @@ Effect-TS layers (composed in builder.ts):
 | sandbox 网络不配 DNS | microsandbox 读宿主 `/etc/resolv.conf`，最快 |
 | opencode-router 在 `src/` 内 | 非 vendor/第三方依赖，是项目核心路由层 |
 | sandbox 只管 VM 生命周期 | 不关心 workspace 内容、模板文件、目录策略 |
+| host-mount 挂载 `/home/user` | E2B/Cube sandbox 将宿主目录挂载到 `/home/user`，opencode config/data 目录随之持久化 |
+| CubeAPI `envs` 不生效 | 当前版本 `Sandbox.create` 的 `envs` 不传入容器，auth/config 通过写文件注入 |
+
+## host-mount 挂载策略
+
+**挂载点**: 宿主目录 → `/home/user`（沙箱内）
+
+```
+宿主路径 (hostMountWorkspaceRoot/safePeer/)
+├── workspace/                    ← E2B_WORKSPACE (/home/user/workspace)
+├── .config/opencode/
+│   └── opencode.json             ← 每次 ensure() 时由 agent 写入
+└── .local/share/opencode/
+    └── auth.json                 ← 每次 ensure() 时由 agent 写入（含 API keys）
+```
+
+**文件写入时序**（每次 `ensure()` 调用）：
+1. `mkdir -p /home/user/workspace .config/opencode .local/share/opencode`
+2. 写 `auth.json`（来自 secrets 配置，含 API keys）
+3. 写 `opencode.json`（来自 `opencode-router.json` 的 `opencode` 章节）
+4. 写 `AGENTS.md` / `TOOLS.md` / `MEMORY.md`（workspace 模板）
+5. 等待 opencode HTTP 健康检查通过
+
+**持久化效果**：sandbox 重启后，宿主目录保留上次会话数据（opencode 状态、历史等），auth/config 在每次启动时重写确保最新。
 
 ## 配置文件 `opencode-router.json`
 
@@ -53,26 +77,38 @@ Effect-TS layers (composed in builder.ts):
 ```json
 {
   "router": { "rootDir": ".opencode-router", ... },
-  "sandbox": { "rootDir": "/home/opencode-agent/.opencode-router/sandboxes", "portStart": 42000, ... },
-  "opencode": { "$schema": "...", "permission": {...}, "agent": { "cognee-coder": { "model": "deepseek/deepseek-v4-flash", "prompt": "..." } } },
+  "sandbox": {
+    "apiUrl": "http://172.16.17.231:3000",
+    "apiKey": "dummy",
+    "template": "opencode-tools",
+    "timeoutMs": 300000,
+    "hostMount": {
+      "enabled": true,
+      "workspaceRoot": "workspaces"
+    }
+  },
+  "opencode": { "$schema": "...", "permission": {...}, "agent": { "cognee-coder": { ... } } },
   "channels": { "wecom": { "accounts": [{ "id": "default", "directory": "per-peer://workspaces", ... }] } },
   "healthPort": 3005
 }
 ```
 
-- `opencode` 章节：原样写入沙箱 `/data/.config/opencode/opencode.json`
-- `sandbox` 章节：沙箱 VM 配置（端口、CPU、内存等）
+- `opencode` 章节：每次 ensure() 时写入沙箱 `/home/user/.config/opencode/opencode.json`
+- `sandbox.hostMount.workspaceRoot`：相对于 `router.rootDir` 的路径，per-user 目录为 `workspaceRoot/safePeer/`
+- 该目录整体挂载为沙箱内的 `/home/user`
 - `channels`：wecom 账号配置，`directory` 必填
 
 ## 远端环境要求
 
-- 宿主机有 `/dev/kvm`
-- microsandbox CLI (`msb`) 安装在 `/root/.microsandbox/bin/msb`
+- 宿主机有 `/dev/kvm`（microsandbox 需要）
 - 远端目录 `/home/opencode-agent/`：
-  - `.env.local` — 含 `DEEPSEEK_API_KEY=sk-xxx`
+  - `.env.local` — 含 `DEEPSEEK_API_KEY=sk-xxx` 等 API keys
   - `opencode-router.json` — 配置文件
-  - `.microsandbox/` — msb 数据（volume mount）
-  - `.opencode-router/` — 路由运行时数据（volume mount）
+  - `.opencode-router/workspaces/` — per-user host-mount 目录（自动创建）
+    - `<safePeer>/` — 单用户目录，挂载为沙箱内 `/home/user`
+      - `workspace/` — opencode 工作区（`E2B_WORKSPACE`）
+      - `.config/opencode/opencode.json` — 由 agent 写入
+      - `.local/share/opencode/auth.json` — 由 agent 写入
 - Docker 容器 `--network host --privileged --device /dev/kvm`
 
 ## 构建 & 部署
@@ -121,13 +157,21 @@ curl http://<REMOTE_IP>:3005/health
 # 看日志
 ssh root@<REMOTE_IP> 'docker logs --tail 100 opencode-agent'
 
-# 查沙箱 opencode.json
+# 查沙箱写入的 opencode.json（host-mount 路径）
 ssh root@<REMOTE_IP> \
-  'cat /home/opencode-agent/.opencode-router/sandboxes/opencode-admin/data/.config/opencode/opencode.json'
+  'cat /home/opencode-agent/.opencode-router/workspaces/<safePeer>/.config/opencode/opencode.json'
 
-# 看沙箱 opencode 日志
+# 查沙箱写入的 auth.json
 ssh root@<REMOTE_IP> \
-  'ls /home/opencode-agent/.opencode-router/sandboxes/opencode-admin/data/.local/share/opencode/log/'
+  'cat /home/opencode-agent/.opencode-router/workspaces/<safePeer>/.local/share/opencode/auth.json'
+
+# 查 workspace 目录
+ssh root@<REMOTE_IP> \
+  'ls /home/opencode-agent/.opencode-router/workspaces/<safePeer>/workspace/'
+
+# 查 opencode 日志（在沙箱 host-mount 目录内）
+ssh root@<REMOTE_IP> \
+  'ls /home/opencode-agent/.opencode-router/workspaces/<safePeer>/.local/share/opencode/log/'
 ```
 
 ## Development

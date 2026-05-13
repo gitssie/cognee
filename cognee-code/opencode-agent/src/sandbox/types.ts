@@ -1,8 +1,7 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import type { Logger } from "pino";
-import type { SandboxStatus as MicrosandboxStatus } from "microsandbox";
 
-export type SandboxStatus = MicrosandboxStatus | "starting" | "paused";
+export type SandboxStatus = "starting" | "running" | "paused" | "stopped" | "crashed" | "draining";
 
 export type SandboxPresence = {
   exists: boolean;
@@ -12,10 +11,9 @@ export type SandboxPresence = {
 export interface SandboxRuntime {
   identity: string;
   sandboxName: string;
-  image: string;
+  template: string;
   hostPort: number;
   guestPort: number;
-  serverPassword: string;
   /** Host path mounted as /workspace inside the sandbox. */
   workspaceHostPath: string;
   status: SandboxStatus;
@@ -30,6 +28,7 @@ export interface SandboxConnection {
   sandboxName: string;
   /** Provider-native sandbox ID (E2B UUID, microsandbox ID, etc.). */
   sandboxId: string;
+  directory: string;
   baseUrl: string;
   hostPort: number;
   client: OpencodeClient;
@@ -42,19 +41,7 @@ export interface ProviderSecret {
   allowHosts: string[];
 }
 
-export interface SandboxManagerConfig {
-  sandboxRoot: string;
-  portStart: number;
-  portEnd: number;
-  idleTtlMs: number;
-  maxRuntimeMs: number;
-  opencodeImage: string;
-  cpus: number;
-  memoryMb: number;
-  secrets: ProviderSecret[];
-  cleanupIntervalMs: number;
-  logger?: Logger;
-}
+
 
 export interface OpenCodeSandboxManager {
   setLogger?(logger: Logger | undefined): void;

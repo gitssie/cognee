@@ -28,6 +28,7 @@ export function createSharedServerProvider(bridge: SharedProviderBridge): OpenCo
     async getClientForDirectory(directory: string): Promise<ClientHandle> {
       return {
         client: bridge.getClient(directory),
+        directory,
         release: async () => {},
       };
     },
@@ -35,6 +36,7 @@ export function createSharedServerProvider(bridge: SharedProviderBridge): OpenCo
     async getClientForSession({ directory }): Promise<ClientHandle> {
       return {
         client: bridge.getClient(directory),
+        directory,
         release: async () => {},
       };
     },
