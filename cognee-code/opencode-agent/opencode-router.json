@@ -1,67 +1,60 @@
 {
-  "version": 1,
-  "router": {
-    "rootDir": ".opencode-router",
-    "workspaceDir": "workspaces",
-    "dataDir": "data",
-    "logDir": "logs",
-    "healthHost": "0.0.0.0"
-  },
-  "sandbox": {
-    "idleTtlMs": 3600000,
-    "maxRuntimeMs": 21600000,
-    "cleanupIntervalMs": 60000,
-    "apiUrl": "http://172.16.17.231:3000",
-    "apiKey": "dummy",
-    "template": "opencode-tools",
-    "timeoutMs": 300000,
-    "hostMount": {
-      "enabled": true,
-      "workspaceRoot": "workspaces"
-    }
-  },
-  "groupsEnabled": false,
-  "plugin": [
-    "@wecom/wecom-openclaw-plugin"
-  ],
-  "opencode": {
-    "$schema": "https://opencode.ai/config.json",
-    "mcp": {
-      "cognee": {
-        "type": "remote",
-        "url": "http://localhost:8000/mcp/",
-        "enabled": false
-      }
+    "version": 1,
+    "mode": "directory",
+    "db": {
+        "url": "postgresql://opencode_user:opencode_pass123@172.16.17.231:5432/opencode"
     },
-    "permission": {
-      "external_directory": "allow"
+    "router": {
+        "rootDir": ".opencode-router",
+        "workspaceDir": "/work",
+        "dataDir": "data",
+        "logDir": "logs",
+        "healthHost": "0.0.0.0"
     },
-    "agent": {
-      "cognee-coder": {
-        "model": "deepseek/deepseek-v4-flash",
-        "prompt": "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.\n\n## Knowledge Base Search\nUse the `search` MCP tool to query the knowledge base when you need information about the project, coding conventions, or past decisions.\n- search_type: Use GRAPH_COMPLETION for natural language Q&A\n- datasets: Restrict to specific dataset names when provided\n\n## Dataset Constraints\nIf the user message contains a '<system-reminder>' block listing available datasets, you MUST restrict your `search` MCP tool calls to only those datasets. Pass the dataset names as the `datasets` parameter when calling `search`."
-      }
-    }
-  },
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "accounts": [
-        {
-          "id": "default",
-          "enabled": true,
-          "directory": "per-peer://workspaces",
-          "opencode": {
-            "agent": "cognee-coder"
-          },
-          "botId": "aibJ5Roq3zkfCviQY83UCBjiCt75HyHq_Na",
-          "secret": "F3IK0lbGeBVJnwWLGMOJkiNouE8uhz917V2N55zSmUZ",
-          "token": "REPLACE_ME_TOKEN",
-          "encodingAESKey": "REPLACE_ME_ENCODING_AES_KEY",
-          "receiveId": "REPLACE_ME_RECEIVE_ID"
+    "sandbox": {
+        "idleTtlMs": 3600000,
+        "maxRuntimeMs": 21600000,
+        "cleanupIntervalMs": 60000,
+        "apiUrl": "http://172.16.17.231:3000",
+        "apiKey": "dummy",
+        "template": "opencode-tools",
+        "timeoutMs": 300000,
+        "hostMount": {
+            "enabled": true,
+            "workspaceRoot": "workspaces"
         }
-      ]
-    }
-  },
-  "healthPort": 3005
+    },
+    "groupsEnabled": false,
+    "plugin": ["@wecom/wecom-openclaw-plugin"],
+    "opencode": {
+        "$schema": "https://opencode.ai/config.json",
+        "mcp": {
+            "cognee": {
+                "type": "remote",
+                "url": "http://localhost:8000/mcp/",
+                "enabled": false
+            }
+        },
+        "permission": {
+            "external_directory": "allow"
+        }
+    },
+    "channels": {
+        "wecom": {
+            "enabled": true,
+            "accounts": [
+                {
+                    "id": "default",
+                    "enabled": true,
+                    "directory": "per-peer://workspaces",
+                    "botId": "aibJ5Roq3zkfCviQY83UCBjiCt75HyHq_Na",
+                    "secret": "F3IK0lbGeBVJnwWLGMOJkiNouE8uhz917V2N55zSmUZ",
+                    "token": "REPLACE_ME_TOKEN",
+                    "encodingAESKey": "REPLACE_ME_ENCODING_AES_KEY",
+                    "receiveId": "REPLACE_ME_RECEIVE_ID"
+                }
+            ]
+        }
+    },
+    "healthPort": 3005
 }

@@ -63,20 +63,20 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
             const args = parts.slice(1);
 
             if (command === "reset") {
-                deps.store.clearSession(channel, identityId, peerKey);
+                await deps.store.clearSession(channel, identityId, peerKey);
                 await sendSystem(channel, identityId, peerId, "Session reset. Send a message to start fresh.");
                 deps.logger.info({ channel, peerId: peerKey }, "session reset");
                 return true;
             }
 
             if (command === "new") {
-                deps.store.clearSession(channel, identityId, peerKey);
+                await deps.store.clearSession(channel, identityId, peerKey);
                 await sendSystem(channel, identityId, peerId, "Started a fresh session. Send a message to continue.");
                 return true;
             }
 
             if (command === "stop") {
-                const session = deps.store.getSession(channel, identityId, peerKey);
+                const session = await deps.store.getSession(channel, identityId, peerKey);
                 if (!session?.session_id) {
                     await sendSystem(channel, identityId, peerId, "No active session to stop.");
                     return true;
@@ -100,7 +100,7 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
             }
 
             if (command === "compact") {
-                const session = deps.store.getSession(channel, identityId, peerKey);
+                const session = await deps.store.getSession(channel, identityId, peerKey);
                 if (!session?.session_id) {
                     await sendSystem(channel, identityId, peerId, "No session to compact yet. Send a message first.");
                     return true;
@@ -129,8 +129,8 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
                     await sendSystem(channel, identityId, peerId, "Pairing is not available for this channel.");
                     return true;
                 }
-                const binding = deps.store.getBinding(channel, identityId, peerKey);
-                const session = deps.store.getSession(channel, identityId, peerKey);
+                const binding = await deps.store.getBinding(channel, identityId, peerKey);
+                const session = await deps.store.getSession(channel, identityId, peerKey);
                 const pairing = await deps.channels.handlePairing(channel, identityId, {
                     identityId,
                     peerKey,
@@ -147,10 +147,10 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
             if (command === "dir" || command === "cd") {
                 const next = args.join(" ").trim();
                 if (!next) {
-                    const binding = deps.store.getBinding(channel, identityId, peerKey);
+                    const binding = await deps.store.getBinding(channel, identityId, peerKey);
                     const current =
                         binding?.directory?.trim() ||
-                        deps.store.getSession(channel, identityId, peerKey)?.directory?.trim() ||
+                        (await deps.store.getSession(channel, identityId, peerKey))?.directory?.trim() ||
                         deps.resolveIdentityDirectory(channel, identityId);
                     await sendSystem(channel, identityId, peerId, `Current directory: ${current || "(none)"}`);
                     return true;
@@ -160,8 +160,8 @@ export function createBridgeCommandRouter(deps: BridgeCommandRouterDeps): Bridge
                     await sendSystem(channel, identityId, peerId, scoped.error);
                     return true;
                 }
-                deps.store.upsertBinding(channel, identityId, peerKey, scoped.directory);
-                deps.store.clearSession(channel, identityId, peerKey, scoped.directory);
+                await deps.store.upsertBinding(channel, identityId, peerKey, scoped.directory);
+                await deps.store.clearSession(channel, identityId, peerKey, scoped.directory);
                 await sendSystem(channel, identityId, peerId, `Directory set to: ${scoped.directory}`);
                 return true;
             }

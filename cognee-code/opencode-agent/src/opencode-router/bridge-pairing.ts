@@ -62,8 +62,8 @@ export class TelegramPairingService {
         }
 
         const boundDirectory = scopedBound.directory;
-        this.deps.store.upsertBinding("telegram", input.identityId, input.peerKey, boundDirectory);
-        this.deps.store.clearSession("telegram", input.identityId, input.peerKey, boundDirectory);
+        await this.deps.store.upsertBinding("telegram", input.identityId, input.peerKey, boundDirectory);
+        await this.deps.store.clearSession("telegram", input.identityId, input.peerKey, boundDirectory);
         this.deps.logger.info({ channel: "telegram", identityId: input.identityId, peerId: input.peerKey, directory: boundDirectory }, "telegram private identity paired");
         await this.send(input, "Pairing successful. This chat is now linked to your worker.");
         return "handled";

@@ -2,7 +2,7 @@
  * Unit tests for ensureWorkspaceFilesEffect — host-mount detection and fallback.
  *
  * Two branches:
- * 1. Host-mount active: sb.files.read("/home/user/workspace/AGENTS.md") succeeds → skip writes
+ * 1. Host-mount active: sb.files.read("/workspace/AGENTS.md") succeeds → skip writes
  * 2. No host-mount: sb.files.read throws → write template files
  *
  * Mocks: @e2b/code-interpreter (controllable files.read), @opencode-ai/sdk/v2 (health).
@@ -17,7 +17,7 @@ import { join } from "node:path";
 // CONTROLLABLE MOCK STATE — shared between tests
 // ═══════════════════════════════════════════════════════════
 
-/** When true, sb.files.read("/home/user/workspace/AGENTS.md") resolves (simulating host-mount). */
+/** When true, sb.files.read("/workspace/AGENTS.md") resolves (simulating host-mount). */
 let filesReadShouldSucceed = false;
 /** How many times sb.files.write() was called. */
 let filesWriteCallCount = 0;
@@ -145,8 +145,8 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       await manager.ensureRuntime("wecom:default:hostmount-yes");
 
-      // files.exists returns true → template files skipped, but opencode.json always written
-      expect(filesWriteCallCount).toBe(1);
+      // files.exists returns true → template files skipped, but opencode.json + db.json always written
+      expect(filesWriteCallCount).toBe(2);
       expect(filesWritePaths).toContain("/home/user/.config/opencode/opencode.json");
 
       await manager.shutdown();
@@ -161,11 +161,11 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       await manager.ensureRuntime("wecom:default:hostmount-no");
 
-      // 4 files: opencode.json + AGENTS.md + TOOLS.md + MEMORY.md
-      expect(filesWriteCallCount).toBe(4);
-      expect(filesWritePaths).toContain("/home/user/workspace/AGENTS.md");
-      expect(filesWritePaths).toContain("/home/user/workspace/TOOLS.md");
-      expect(filesWritePaths).toContain("/home/user/workspace/MEMORY.md");
+      // 5 files: opencode.json + db.json + AGENTS.md + TOOLS.md + MEMORY.md
+      expect(filesWriteCallCount).toBe(5);
+      expect(filesWritePaths).toContain("/workspace/AGENTS.md");
+      expect(filesWritePaths).toContain("/workspace/TOOLS.md");
+      expect(filesWritePaths).toContain("/workspace/MEMORY.md");
       expect(filesWritePaths).toContain(
         "/home/user/.config/opencode/opencode.json",
       );
@@ -188,14 +188,14 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       await manager.ensureRuntime("wecom:default:hostmount-secrets");
 
-      // 5 files: auth.json + opencode.json + AGENTS.md + TOOLS.md + MEMORY.md
-      expect(filesWriteCallCount).toBe(5);
+      // 6 files: auth.json + opencode.json + db.json + AGENTS.md + TOOLS.md + MEMORY.md
+      expect(filesWriteCallCount).toBe(6);
       expect(filesWritePaths).toContain(
         "/home/user/.local/share/opencode/auth.json",
       );
-      expect(filesWritePaths).toContain("/home/user/workspace/AGENTS.md");
-      expect(filesWritePaths).toContain("/home/user/workspace/TOOLS.md");
-      expect(filesWritePaths).toContain("/home/user/workspace/MEMORY.md");
+      expect(filesWritePaths).toContain("/workspace/AGENTS.md");
+      expect(filesWritePaths).toContain("/workspace/TOOLS.md");
+      expect(filesWritePaths).toContain("/workspace/MEMORY.md");
 
       await manager.shutdown();
     },
@@ -215,8 +215,8 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       await manager.ensureRuntime("wecom:default:hostmount-auth-skip");
 
-      // files.exists true → templates skipped; auth.json written (has secrets); opencode.json written
-      expect(filesWriteCallCount).toBe(2);
+      // files.exists true → templates skipped; auth.json written (has secrets); opencode.json + db.json written
+      expect(filesWriteCallCount).toBe(3);
       expect(filesWritePaths).toContain("/home/user/.local/share/opencode/auth.json");
       expect(filesWritePaths).toContain("/home/user/.config/opencode/opencode.json");
 
@@ -238,12 +238,12 @@ describe("ensureWorkspaceFilesEffect — host-mount detection", () => {
 
       await manager.ensureRuntime("wecom:default:hostmount-unknown-secret");
 
-      // No matching provider → auth is empty → 4 writes (no auth.json)
-      expect(filesWriteCallCount).toBe(4);
+      // No matching provider → auth is empty → 5 writes (no auth.json, includes opencode.json + db.json + 3 templates)
+      expect(filesWriteCallCount).toBe(5);
       expect(filesWritePaths).not.toContain(
         "/home/user/.local/share/opencode/auth.json",
       );
-      expect(filesWritePaths).toContain("/home/user/workspace/AGENTS.md");
+      expect(filesWritePaths).toContain("/workspace/AGENTS.md");
 
       await manager.shutdown();
     },

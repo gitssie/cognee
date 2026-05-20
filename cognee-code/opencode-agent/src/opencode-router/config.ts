@@ -103,6 +103,8 @@ export type ChannelConfig = {
 
 export type OpenCodeRouterConfigFile = {
     version: number;
+    /** Deployment mode override: "sandbox" | "directory". Auto-detected if absent. */
+    mode?: AgentMode;
     opencodeUrl?: string;
     /**
      * Default workspace directory or strategy string.
@@ -153,6 +155,15 @@ export type OpenCodeRouterConfigFile = {
             workspaceRoot?: string;
         };
     };
+    /** Directory mode configuration (shared opencode serve). */
+    directory?: {
+        /** Workspace root for per-user directories (default "/work"). */
+        workspaceRoot?: string;
+    };
+    /** Database configuration (PostgreSQL). */
+    db?: {
+        url?: string;
+    };
     /** OpenCode server config — written verbatim into sandbox opencode.json. */
     opencode?: Record<string, unknown>;
     healthPort?: number;
@@ -170,6 +181,15 @@ export type RuntimePaths = {
     workspaceDir: string;
     dataDir: string;
     logDir: string;
+};
+
+/** Mode selector — determined at startup from config file. */
+export type AgentMode = "sandbox" | "directory";
+
+/** Fully-resolved directory configuration — computed once at startup. */
+export type DirectoryConfig = {
+    /** Workspace root for per-user directories. */
+    workspaceRoot: string;
 };
 
 /** Fully-resolved sandbox configuration — computed once at startup. */
@@ -192,10 +212,12 @@ export type Config = {
     configFile: OpenCodeRouterConfigFile;
     /** All runtime paths, resolved at startup. */
     paths: RuntimePaths;
+    /** Active deployment mode (sandbox or directory). */
+    mode: AgentMode;
+    /** Fully-resolved directory config (only meaningful in directory mode). */
+    directory: DirectoryConfig;
     /** Fully-resolved sandbox config (only meaningful in sandbox mode). */
     sandbox: SandboxConfig;
-    /** Options for the classic-mode OpenCode server. */
-    opencodeServerOptions: ServerOptions;
     opencodeUrl: string;
     opencodeDirectory: string;
     opencodeUsername?: string;
@@ -224,7 +246,7 @@ export type Config = {
     /** All configured channel identities in a channel-agnostic view. */
     channels: ChannelIdentity[];
     dataDir: string;
-    dbPath: string;
+    dbUrl: string;
     logFile: string;
     toolUpdatesEnabled: boolean;
     groupsEnabled: boolean;
@@ -726,9 +748,12 @@ export function loadConfig(
     const logFile = env.OPENCODE_ROUTER_LOG_FILE?.trim()
         ? path.resolve(env.OPENCODE_ROUTER_LOG_FILE.trim())
         : path.join(logDir, "opencode-agent.log");
-    const dbPath = env.OPENCODE_ROUTER_DB_PATH?.trim()
-        ? path.resolve(env.OPENCODE_ROUTER_DB_PATH.trim())
-        : path.join(dataDir, "opencode-router.db");
+    const dbUrl = configFile.db?.url?.trim() || "";
+    if (!dbUrl) {
+        throw new Error(
+            "db.url is required. Set it in opencode-router.json (db.url) with a PostgreSQL connection string.",
+        );
+    }
 
     // ── 3. OpenCode directory ──────────────────────────────────────────────
     const opencodeDirectory =
@@ -738,7 +763,35 @@ export function loadConfig(
     }
     const resolvedDirectory = opencodeDirectory || process.cwd();
 
-    // ── 4. Sandbox config (fully resolved, no downstream ??) ──────────────
+    // ── 4. Mode detection — explicit config field first, else auto-detect ──
+    const explicitMode = configFile.mode?.trim() as AgentMode | undefined;
+    const hasSandboxConfig = (configFile.sandbox?.apiUrl?.trim() || env.OPENCODE_SANDBOX_API_URL?.trim()) ? true : false;
+    const mode: AgentMode = explicitMode === "sandbox" || explicitMode === "directory"
+        ? explicitMode
+        : (hasSandboxConfig ? "sandbox" : "directory");
+
+    // ── 5. Directory config (resolved, only meaningful in directory mode) ──
+    const d = configFile.directory ?? {};
+    const directoryWorkspaceRoot = env.OPENCODE_DIRECTORY_WORKSPACE_ROOT?.trim()
+        ?? d.workspaceRoot?.trim()
+        ?? configFile.router?.workspaceDir?.trim()
+        ?? null;
+
+    if (!directoryWorkspaceRoot && mode === "directory") {
+        throw new Error(
+            "directory.workspaceRoot is required in directory mode. " +
+            "Set it in opencode-router.json (directory.workspaceRoot), " +
+            "router.workspaceDir, or OPENCODE_DIRECTORY_WORKSPACE_ROOT env var.",
+        );
+    }
+
+    const directory: DirectoryConfig = {
+        workspaceRoot: path.isAbsolute(directoryWorkspaceRoot ?? "")
+            ? path.resolve(directoryWorkspaceRoot ?? "")
+            : path.resolve(rootDir, directoryWorkspaceRoot ?? ""),
+    };
+
+    // ── 6. Sandbox config (fully resolved, only meaningful in sandbox mode) ─
     const s = configFile.sandbox ?? {};
     const idleTtlMs = parseIntWithDefault(env.OPENCODE_SANDBOX_IDLE_TTL_MS, s.idleTtlMs ?? 3_600_000);
     const maxRuntimeMs = parseIntWithDefault(env.OPENCODE_SANDBOX_MAX_RUNTIME_MS, s.maxRuntimeMs ?? 21_600_000);
@@ -763,21 +816,14 @@ export function loadConfig(
         healthHost,
     };
 
-    // ── 5. Classic-mode OpenCode server options ────────────────────────────
-    const opencodeServerOptions: ServerOptions = {
-        hostname: env.OPENCODE_HOSTNAME?.trim() ?? "127.0.0.1",
-        port: parseIntWithDefault(env.OPENCODE_PORT, 0), // 0 = random available port
-        config: configFile.opencode as any,
-    };
-
-    // ── 6. Health port ─────────────────────────────────────────────────────
+    // ── 7. Health port ─────────────────────────────────────────────────────
     const healthPort =
         parseInteger(env.OPENCODE_ROUTER_HEALTH_PORT) ??
         parseInteger(env.PORT) ??
         configFile.healthPort ??
         3005;
 
-    // ── 7. Channels / bots ────────────────────────────────────────────────
+    // ── 8. Channels / bots ────────────────────────────────────────────────
     const permissionMode =
         env.PERMISSION_MODE?.toLowerCase() === "deny" ? "deny" : "allow";
     const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
@@ -819,8 +865,9 @@ export function loadConfig(
         configPath,
         configFile,
         paths,
+        mode,
+        directory,
         sandbox,
-        opencodeServerOptions,
         opencodeUrl: env.OPENCODE_URL?.trim() || configFile.opencodeUrl || "http://127.0.0.1:4096",
         opencodeDirectory: resolvedDirectory,
         opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
@@ -838,7 +885,7 @@ export function loadConfig(
         })),
         channels,
         dataDir,
-        dbPath,
+        dbUrl,
         logFile,
         toolUpdatesEnabled: parseBoolean(env.TOOL_UPDATES_ENABLED, false),
         groupsEnabled: parseBoolean(env.GROUPS_ENABLED, configFile.groupsEnabled ?? false),

@@ -37,7 +37,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     adapterKey: (channel: string, identityId: string) => `${channel}:${identityId}`,
     hasAdapter: () => true,
     recordInboundActivity: () => calls.push("recordInbound"),
-    resolveIdentityDirectory: () => "",
+    resolveIdentityDirectory: () => "/workspace",
     isDangerousRootDirectory: () => false,
     resolveScopedDirectory: (input: string) => ({ ok: true, directory: input }),
     normalizeDirectory: (input: string) => input,
@@ -53,8 +53,8 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
         getSandbox: () => null,
         upsertSession: () => calls.push("createSession"),
       } as any,
-      instance: {
-        getClient: async () => ({
+      provider: {
+        getClientForSession: async () => ({
           client: {
             session: {
               create: async () => ({ id: "ses_1" }),
@@ -67,8 +67,13 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
       getChannelLabel: (channel: string) => channel,
       formatPeer: (_channel: any, peerId: string) => peerId,
       getAdapter: () => undefined,
-      onEnqueue: () => calls.push("enqueue"),
     }),
+    stream: {
+      consumeSession: async (_sessionID: string, _handle: unknown, callbacks: { onText: (text: string) => Promise<void> }) => {
+        await callbacks.onText("reply");
+      },
+    },
+    onEnqueue: () => calls.push("enqueue"),
     reportThinking: () => calls.push("thinking"),
     reportDone: () => calls.push("done"),
     startTyping: () => calls.push("startTyping"),

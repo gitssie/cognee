@@ -771,7 +771,7 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
     expect(hostMount[0].hostPath).toBeString();
     expect(hostMount[0].hostPath).not.toBeEmpty();
     expect(hostMount[0].hostPath).toStartWith("/");
-    expect(hostMount[0].mountPath).toBe("/home/user");
+    expect(hostMount[0].mountPath).toBe("/workspace");
   }
 
   test("SQL injection identity: host-mount JSON is valid and parseable", async () => {
@@ -970,7 +970,7 @@ describe("Sandbox.create() host-mount metadata — adversarial identity", () => 
       expect(Array.isArray(hostMount)).toBeTrue();
       expect(hostMount).toHaveLength(1);
       expect(hostMount[0].hostPath).toStartWith(cfg.hostMountWorkspaceRoot);
-      expect(hostMount[0].mountPath).toBe("/home/user");
+      expect(hostMount[0].mountPath).toBe("/workspace");
 
       capturedPaths.push(hostMount[0].hostPath);
     }

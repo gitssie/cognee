@@ -371,7 +371,7 @@ export function createBridgeAdminHandlers(deps: BridgeAdminHandlersDeps): Health
                 let channel: ChannelName | undefined;
                 if (channelRaw) channel = normalizeKnownChannel(channelRaw);
                 const identityId = identityIdRaw ? normalizeIdentityId(identityIdRaw) : undefined;
-                const bindings = store.listBindings({ ...(channel ? { channel } : {}), ...(identityId ? { identityId } : {}) });
+                const bindings = await store.listBindings({ ...(channel ? { channel } : {}), ...(identityId ? { identityId } : {}) });
                 return { items: bindings.map((entry) => ({ channel: entry.channel, identityId: entry.identity_id, peerId: entry.peer_id, directory: entry.directory, updatedAt: entry.updated_at })) };
             },
             setBinding: async (input) => {
@@ -388,16 +388,16 @@ export function createBridgeAdminHandlers(deps: BridgeAdminHandlersDeps): Health
                     error.status = 400;
                     throw error;
                 }
-                store.upsertBinding(channel, identityId, peerKey, scoped.directory);
-                store.clearSession(channel, identityId, peerKey, scoped.directory);
+                await store.upsertBinding(channel, identityId, peerKey, scoped.directory);
+                await store.clearSession(channel, identityId, peerKey, scoped.directory);
             },
             clearBinding: async (input) => {
                 const channel = normalizeKnownChannel(input.channel);
                 const identityId = normalizeIdentityId(input.identityId);
                 const peerKey = input.peerId.trim();
                 if (!peerKey) throw new Error("peerId is required");
-                store.deleteBinding(channel, identityId, peerKey);
-                store.clearSession(channel, identityId, peerKey);
+                await store.deleteBinding(channel, identityId, peerKey);
+                await store.clearSession(channel, identityId, peerKey);
             },
         },
 
@@ -456,8 +456,8 @@ export function createBridgeAdminHandlers(deps: BridgeAdminHandlersDeps): Health
                         return { channel, directory: normalizedDir || workspaceRootNormalized, identityId: targetIdentityId, peerId, attempted: 1, sent: 0, failures: [{ identityId: targetIdentityId, peerId, error: "Adapter not running" }], targets: [target] };
                     }
                     if (autoBind && normalizedDir) {
-                        store.upsertBinding(channel, targetIdentityId, peerId, normalizedDir);
-                        store.clearSession(channel, targetIdentityId, peerId, normalizedDir);
+                        await store.upsertBinding(channel, targetIdentityId, peerId, normalizedDir);
+                        await store.clearSession(channel, targetIdentityId, peerId, normalizedDir);
                     }
                     const delivery = await deliverParts(channel, targetIdentityId, peerId, outboundParts, { kind: "system", display: false });
                     const failed = deliveryFailed(delivery);
@@ -473,7 +473,7 @@ export function createBridgeAdminHandlers(deps: BridgeAdminHandlersDeps): Health
                     };
                 }
 
-                const bindings = store.listBindings({ channel, ...(identityId ? { identityId } : {}), directory: normalizedDir });
+                const bindings = await store.listBindings({ channel, ...(identityId ? { identityId } : {}), directory: normalizedDir });
                 if (bindings.length === 0) return { channel, directory: normalizedDir, ...(identityId ? { identityId } : {}), attempted: 0, sent: 0, reason: `No bound conversations for ${channel}${identityId ? `/${identityId}` : ""} at directory ${normalizedDir}`, targets: [] };
                 const failures: Array<{ identityId: string; peerId: string; error: string }> = [];
                 const targets: SendTargetDelivery[] = [];
@@ -484,8 +484,8 @@ export function createBridgeAdminHandlers(deps: BridgeAdminHandlersDeps): Health
                     try {
                         channels?.validatePeerId(channel, binding.identity_id, binding.peer_id);
                     } catch {
-                        store.deleteBinding(channel, binding.identity_id, binding.peer_id);
-                        store.clearSession(channel, binding.identity_id, binding.peer_id);
+                        await store.deleteBinding(channel, binding.identity_id, binding.peer_id);
+                        await store.clearSession(channel, binding.identity_id, binding.peer_id);
                         const error = "Invalid Telegram peerId binding removed (expected numeric chat_id)";
                         targets.push(makeTargetError(binding.identity_id, binding.peer_id, error, "invalid_target"));
                         failures.push({ identityId: binding.identity_id, peerId: binding.peer_id, error });

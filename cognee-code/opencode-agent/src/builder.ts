@@ -1,4 +1,3 @@
-import { createOpencode, type Agent } from "@opencode-ai/sdk/v2";
 import { join } from "node:path";
 import type { OpenCodeClientProvider } from "./opencode-router/client-provider";
 
@@ -13,12 +12,6 @@ import { startAdminProxy } from "./admin-proxy";
 import { createLogger } from "./opencode-router/logger";
 
 // ── Shared helpers ─────────────────────────────────────────
-
-function toLoopback(url: string): string {
-  const u = new URL(url);
-  if (u.hostname === "0.0.0.0") u.hostname = "127.0.0.1";
-  return u.toString();
-}
 
 function resolveSecrets(config: Config): ProviderSecret[] {
   const secrets: ProviderSecret[] = [];
@@ -48,19 +41,10 @@ export interface Service {
 // ── Builder ────────────────────────────────────────────────
 
 export class ServiceBuilder {
-  private readonly _mode: "sandbox" | "classic";
   private _secrets?: ProviderSecret[];
 
-  private constructor(mode: "sandbox" | "classic") {
-    this._mode = mode;
-  }
-
-  static sandbox(): ServiceBuilder {
-    return new ServiceBuilder("sandbox");
-  }
-
-  static classic(): ServiceBuilder {
-    return new ServiceBuilder("classic");
+  static create(): ServiceBuilder {
+    return new ServiceBuilder();
   }
 
   withSecrets(secrets: ProviderSecret[]): this {
@@ -78,29 +62,21 @@ export class ServiceBuilder {
     const cleanup: Array<() => Promise<void> | void> = [];
     let provider: OpenCodeClientProvider;
     let manager: E2BSandboxManager | undefined;
-    let agentList: string[] = [];
 
     // Single unified log file for the entire service (router + sandbox + builder)
     const logPath = join(config.paths.logDir, "opencode-agent.log");
     const logger = createLogger(config.logLevel, { logFile: logPath });
 
-    if (this._mode === "classic") {
-      logger.info({ mode: "classic" }, "opencode-agent: classic mode");
+    if (config.mode === "directory") {
+      logger.info({ mode: "directory", workspaceRoot: config.directory.workspaceRoot }, "opencode-agent: directory mode");
+      console.log(`[opencode-agent] Directory mode (shared opencode serve)`);
+      console.log(`[opencode-agent] opencode url:         ${config.opencodeUrl}`);
+      console.log(`[opencode-agent] workspace root:       ${config.directory.workspaceRoot}`);
 
-      const opencode = await createOpencode(config.opencodeServerOptions);
-      cleanup.push(() => opencode.server.close());
-
-      process.env.OPENCODE_URL = toLoopback(opencode.server.url);
-      provider = createLocalProvider(config);
-
-      const agents = await opencode.client.app.agents();
-      const agentList = (agents.data ?? []).map((a: Agent) => a.name).filter(Boolean) as string[];
-      const agentNames = agentList.join(", ") || "none";
-      logger.info({ mode: "classic", opencodeUrl: opencode.server.url, agents: agentNames }, "opencode server ready");
-      console.log(`[opencode-agent] Classic mode (single shared OpenCode server)`);
-      console.log(`OpenCode server running at ${opencode.server.url}`);
-      console.log(`Available agents: ${agentNames}`);
+      provider = createLocalProvider(config, logger);
+      process.env.OPENCODE_URL = config.opencodeUrl;
     } else {
+      // sandbox mode
       const { sandbox } = config;
       const secrets = this._secrets ?? resolveSecrets(config);
 
@@ -144,7 +120,7 @@ export class ServiceBuilder {
       process.env.OPENCODE_URL = "http://127.0.0.1:4096";
     }
 
-    const router = await startRouter(provider, { sandboxManager: manager as any, availableAgents: this._mode === "classic" ? agentList : undefined }, config, logger);
+    const router = await startRouter(provider, { sandboxManager: manager as any }, config, logger);
 
     console.log(`[opencode-agent] router config: ${router.configPath}`);
     console.log(`[opencode-agent] router logs:   ${logPath}`);

@@ -14,27 +14,26 @@ COPY package.json bun.lock tsconfig.json ./
 COPY src/ ./src/
 RUN bun install && bun run build
 
-FROM ghcr.io/anomalyco/opencode:latest
+FROM oven/bun:1.2-slim
 
-COPY --from=oven/bun:1.2-alpine /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 
-RUN apk add --no-cache tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY src/opencode-router/workspace-template ./dist/src/opencode-router/workspace-template
+COPY src/opencode-router/shims ./dist/src/opencode-router/shims
 
 COPY package.json bunfig.toml tsconfig.json opencode-router.json docker-entrypoint.sh ./
 RUN chmod +x /app/docker-entrypoint.sh
 
 ENV NODE_ENV=production \
     TZ=Asia/Shanghai \
-    OPENCODE_HOST=0.0.0.0 \
-    OPENCODE_PORT=4096 \
     OPENCODE_ROUTER_HEALTH_PORT=3005
 
-EXPOSE 4096 3005
+EXPOSE 3005
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["bun", "run", "dist/src/index.js"]

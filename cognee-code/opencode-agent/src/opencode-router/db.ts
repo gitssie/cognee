@@ -1,8 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
+import { Pool } from "pg";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { eq, and } from "drizzle-orm";
 
-import { Database } from "bun:sqlite";
-
+import { schema, type Schema } from "./db/index.js";
 import type { ChannelName } from "./config.js";
 
 type SessionRow = {
@@ -10,8 +10,8 @@ type SessionRow = {
   identity_id: string;
   peer_id: string;
   session_id: string;
-  directory?: string | null;
-  sandbox_id?: string | null;
+  directory: string | null;
+  sandbox_id: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -44,232 +44,294 @@ type SandboxRow = {
 };
 
 export class BridgeStore {
-  private db: Database;
+  private pool: Pool;
+  private db: NodePgDatabase<Schema>;
 
-  constructor(private readonly dbPath: string) {
-    this.ensureDir();
-    this.db = new Database(dbPath, { create: true });
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        channel TEXT NOT NULL,
-        identity_id TEXT NOT NULL,
-        peer_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        directory TEXT,
-        sandbox_id TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, identity_id, peer_id)
+  constructor(dbUrl: string) {
+    this.pool = new Pool({ connectionString: dbUrl, connectionTimeoutMillis: 10_000 });
+    this.db = drizzle({ client: this.pool, schema });
+  }
+
+  // ── Sessions ────────────────────────────────────────────────────────────────
+
+  async getSession(channel: ChannelName, identityId: string, peerId: string): Promise<SessionRow | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.channel, channel),
+          eq(schema.sessions.identity_id, identityId),
+          eq(schema.sessions.peer_id, peerId),
+        ),
+      )
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async upsertSession(
+    channel: ChannelName,
+    identityId: string,
+    peerId: string,
+    sessionId: string,
+    directory?: string | null,
+    sandboxId?: string | null,
+  ): Promise<void> {
+    const now = Date.now();
+    await this.db
+      .insert(schema.sessions)
+      .values({
+        channel,
+        identity_id: identityId,
+        peer_id: peerId,
+        session_id: sessionId,
+        directory: directory ?? null,
+        sandbox_id: sandboxId ?? null,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [schema.sessions.channel, schema.sessions.identity_id, schema.sessions.peer_id],
+        set: {
+          session_id: sessionId,
+          directory: directory ?? null,
+          sandbox_id: sandboxId ?? null,
+          updated_at: now,
+        },
+      });
+  }
+
+  async clearSession(channel: ChannelName, identityId: string, peerId: string, directory?: string | null): Promise<boolean> {
+    const now = Date.now();
+    const setValues: Record<string, unknown> = {
+      session_id: "",
+      updated_at: now,
+    };
+    if (directory !== undefined) {
+      setValues.directory = directory;
+    }
+    const result = await this.db
+      .update(schema.sessions)
+      .set(setValues)
+      .where(
+        and(
+          eq(schema.sessions.channel, channel),
+          eq(schema.sessions.identity_id, identityId),
+          eq(schema.sessions.peer_id, peerId),
+        ),
       );
-      CREATE TABLE IF NOT EXISTS allowlist (
-        channel TEXT NOT NULL,
-        peer_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, peer_id)
+    return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  async deleteSession(channel: ChannelName, identityId: string, peerId: string): Promise<boolean> {
+    const result = await this.db
+      .delete(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.channel, channel),
+          eq(schema.sessions.identity_id, identityId),
+          eq(schema.sessions.peer_id, peerId),
+        ),
       );
-      CREATE TABLE IF NOT EXISTS bindings (
-        channel TEXT NOT NULL,
-        identity_id TEXT NOT NULL,
-        peer_id TEXT NOT NULL,
-        directory TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, identity_id, peer_id)
+    return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  // ── Bindings ────────────────────────────────────────────────────────────────
+
+  async getBinding(channel: ChannelName, identityId: string, peerId: string): Promise<BindingRow | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.bindings)
+      .where(
+        and(
+          eq(schema.bindings.channel, channel),
+          eq(schema.bindings.identity_id, identityId),
+          eq(schema.bindings.peer_id, peerId),
+        ),
+      )
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async upsertBinding(channel: ChannelName, identityId: string, peerId: string, directory: string): Promise<void> {
+    const now = Date.now();
+    await this.db
+      .insert(schema.bindings)
+      .values({
+        channel,
+        identity_id: identityId,
+        peer_id: peerId,
+        directory,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [schema.bindings.channel, schema.bindings.identity_id, schema.bindings.peer_id],
+        set: { directory, updated_at: now },
+      });
+  }
+
+  async deleteBinding(channel: ChannelName, identityId: string, peerId: string): Promise<boolean> {
+    const result = await this.db
+      .delete(schema.bindings)
+      .where(
+        and(
+          eq(schema.bindings.channel, channel),
+          eq(schema.bindings.identity_id, identityId),
+          eq(schema.bindings.peer_id, peerId),
+        ),
       );
-      CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS sandboxes (
-        channel TEXT NOT NULL,
-        identity_id TEXT NOT NULL,
-        peer_id TEXT NOT NULL,
-        sandbox_id TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'unknown',
-        host_workspace_path TEXT NOT NULL DEFAULT '',
-        host_data_path TEXT NOT NULL DEFAULT '',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, identity_id, peer_id)
-      );
-    `);
-    // One-time migration: backfill sandbox_id from sessions into sandboxes table
-    const sandboxCount = (this.db.prepare("SELECT COUNT(*) AS cnt FROM sandboxes").get() as { cnt: number }).cnt;
-    if (sandboxCount === 0) {
-      this.db.exec(`
-        INSERT OR IGNORE INTO sandboxes (channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at)
-        SELECT channel, identity_id, peer_id, sandbox_id, 'unknown', '', '', created_at, updated_at
-        FROM sessions
-        WHERE sandbox_id IS NOT NULL AND sandbox_id != ''
-      `);
+    return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  async listBindings(
+    filters: { channel?: ChannelName; identityId?: string; directory?: string } = {},
+  ): Promise<BindingRow[]> {
+    const conditions = [];
+    if (filters.channel) conditions.push(eq(schema.bindings.channel, filters.channel));
+    if (filters.identityId) conditions.push(eq(schema.bindings.identity_id, filters.identityId));
+    if (filters.directory) conditions.push(eq(schema.bindings.directory, filters.directory));
+
+    let query = this.db.select().from(schema.bindings).$dynamic();
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+    return query.orderBy(schema.bindings.updated_at);
+  }
+
+  // ── Allowlist ───────────────────────────────────────────────────────────────
+
+  async isAllowed(channel: ChannelName, peerId: string): Promise<boolean> {
+    const rows = await this.db
+      .select()
+      .from(schema.allowlist)
+      .where(
+        and(
+          eq(schema.allowlist.channel, channel),
+          eq(schema.allowlist.peer_id, peerId),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async allowPeer(channel: ChannelName, peerId: string): Promise<void> {
+    const now = Date.now();
+    await this.db
+      .insert(schema.allowlist)
+      .values({ channel, peer_id: peerId, created_at: now })
+      .onConflictDoUpdate({
+        target: [schema.allowlist.channel, schema.allowlist.peer_id],
+        set: { created_at: now },
+      });
+  }
+
+  async seedAllowlist(channel: ChannelName, peers: Iterable<string>): Promise<void> {
+    const now = Date.now();
+    for (const peer of peers) {
+      await this.db
+        .insert(schema.allowlist)
+        .values({ channel, peer_id: peer, created_at: now })
+        .onConflictDoNothing();
     }
   }
 
-  private ensureDir() {
-    const dir = path.dirname(this.dbPath);
-    fs.mkdirSync(dir, { recursive: true });
+  // ── Settings ────────────────────────────────────────────────────────────────
+
+  async getSetting(key: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ value: schema.settings.value })
+      .from(schema.settings)
+      .where(eq(schema.settings.key, key))
+      .limit(1);
+    return rows[0]?.value ?? null;
   }
 
-  getSession(channel: ChannelName, identityId: string, peerId: string): SessionRow | null {
-    const stmt = this.db.prepare(
-      "SELECT channel, identity_id, peer_id, session_id, directory, sandbox_id, created_at, updated_at FROM sessions WHERE channel = ? AND identity_id = ? AND peer_id = ?",
-    );
-    const row = stmt.get(channel, identityId, peerId) as SessionRow | null;
-    return row ?? null;
+  async setSetting(key: string, value: string): Promise<void> {
+    await this.db
+      .insert(schema.settings)
+      .values({ key, value })
+      .onConflictDoUpdate({
+        target: schema.settings.key,
+        set: { value },
+      });
   }
 
-  upsertSession(channel: ChannelName, identityId: string, peerId: string, sessionId: string, directory?: string | null, sandboxId?: string | null) {
+  // ── Sandboxes ───────────────────────────────────────────────────────────────
+
+  async getSandbox(channel: ChannelName, identityId: string, peerId: string): Promise<SandboxRow | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.sandboxes)
+      .where(
+        and(
+          eq(schema.sandboxes.channel, channel),
+          eq(schema.sandboxes.identity_id, identityId),
+          eq(schema.sandboxes.peer_id, peerId),
+        ),
+      )
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async upsertSandbox(
+    channel: ChannelName,
+    identityId: string,
+    peerId: string,
+    sandboxId: string,
+    status: string,
+    hostWorkspacePath: string,
+    hostDataPath: string,
+  ): Promise<void> {
     const now = Date.now();
-    const stmt = this.db.prepare(
-      `INSERT INTO sessions (channel, identity_id, peer_id, session_id, directory, sandbox_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET session_id = excluded.session_id, directory = excluded.directory, sandbox_id = excluded.sandbox_id, updated_at = excluded.updated_at`,
-    );
-    stmt.run(channel, identityId, peerId, sessionId, directory ?? null, sandboxId ?? null, now, now);
+    await this.db
+      .insert(schema.sandboxes)
+      .values({
+        channel,
+        identity_id: identityId,
+        peer_id: peerId,
+        sandbox_id: sandboxId,
+        status,
+        host_workspace_path: hostWorkspacePath,
+        host_data_path: hostDataPath,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflictDoUpdate({
+        target: [schema.sandboxes.channel, schema.sandboxes.identity_id, schema.sandboxes.peer_id],
+        set: {
+          sandbox_id: sandboxId,
+          status,
+          host_workspace_path: hostWorkspacePath,
+          host_data_path: hostDataPath,
+          updated_at: now,
+        },
+      });
   }
 
-  clearSession(channel: ChannelName, identityId: string, peerId: string, directory?: string | null): boolean {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      `UPDATE sessions
-       SET session_id = '', directory = COALESCE(?, directory), updated_at = ?
-       WHERE channel = ? AND identity_id = ? AND peer_id = ?`,
-    );
-    const result = stmt.run(directory ?? null, now, channel, identityId, peerId);
-    return result.changes > 0;
+  async deleteSandbox(channel: ChannelName, identityId: string, peerId: string): Promise<boolean> {
+    const result = await this.db
+      .delete(schema.sandboxes)
+      .where(
+        and(
+          eq(schema.sandboxes.channel, channel),
+          eq(schema.sandboxes.identity_id, identityId),
+          eq(schema.sandboxes.peer_id, peerId),
+        ),
+      );
+    return result.rowCount ? result.rowCount > 0 : false;
   }
 
-  deleteSession(channel: ChannelName, identityId: string, peerId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM sessions WHERE channel = ? AND identity_id = ? AND peer_id = ?");
-    const result = stmt.run(channel, identityId, peerId);
-    return result.changes > 0;
+  async listSandboxes(): Promise<SandboxRow[]> {
+    return this.db
+      .select()
+      .from(schema.sandboxes)
+      .orderBy(schema.sandboxes.updated_at);
   }
 
-  getBinding(channel: ChannelName, identityId: string, peerId: string): BindingRow | null {
-    const stmt = this.db.prepare(
-      "SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? AND identity_id = ? AND peer_id = ?",
-    );
-    const row = stmt.get(channel, identityId, peerId) as BindingRow | null;
-    return row ?? null;
-  }
+  // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-  upsertBinding(channel: ChannelName, identityId: string, peerId: string, directory: string) {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      `INSERT INTO bindings (channel, identity_id, peer_id, directory, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET directory = excluded.directory, updated_at = excluded.updated_at`,
-    );
-    stmt.run(channel, identityId, peerId, directory, now, now);
-  }
-
-  deleteBinding(channel: ChannelName, identityId: string, peerId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM bindings WHERE channel = ? AND identity_id = ? AND peer_id = ?");
-    const result = stmt.run(channel, identityId, peerId);
-    return result.changes > 0;
-  }
-
-  listBindings(filters: { channel?: ChannelName; identityId?: string; directory?: string } = {}): BindingRow[] {
-    const where: string[] = [];
-    const args: Array<string> = [];
-    if (filters.channel) {
-      where.push("channel = ?");
-      args.push(filters.channel);
-    }
-    if (filters.identityId) {
-      where.push("identity_id = ?");
-      args.push(filters.identityId);
-    }
-    if (filters.directory) {
-      where.push("directory = ?");
-      args.push(filters.directory);
-    }
-
-    const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
-    const stmt = this.db.prepare(
-      `SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings${clause} ORDER BY updated_at DESC`,
-    );
-    return stmt.all(...args) as BindingRow[];
-  }
-
-  isAllowed(channel: ChannelName, peerId: string): boolean {
-    const stmt = this.db.prepare(
-      "SELECT channel, peer_id, created_at FROM allowlist WHERE channel = ? AND peer_id = ?",
-    );
-    return Boolean(stmt.get(channel, peerId));
-  }
-
-  allowPeer(channel: ChannelName, peerId: string) {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      `INSERT INTO allowlist (channel, peer_id, created_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(channel, peer_id) DO UPDATE SET created_at = excluded.created_at`,
-    );
-    stmt.run(channel, peerId, now);
-  }
-
-  seedAllowlist(channel: ChannelName, peers: Iterable<string>) {
-    const insert = this.db.prepare(
-      `INSERT INTO allowlist (channel, peer_id, created_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(channel, peer_id) DO NOTHING`,
-    );
-    const now = Date.now();
-    const transaction = this.db.transaction(() => {
-      for (const peer of peers) {
-        insert.run(channel, peer, now);
-      }
-    });
-    transaction();
-  }
-
-  getSetting(key: string): string | null {
-    const stmt = this.db.prepare("SELECT value FROM settings WHERE key = ?");
-    const row = stmt.get(key) as { value?: string } | null;
-    return row?.value ?? null;
-  }
-
-  setSetting(key: string, value: string) {
-    const stmt = this.db.prepare(
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    );
-    stmt.run(key, value);
-  }
-
-  getSandbox(channel: ChannelName, identityId: string, peerId: string): SandboxRow | null {
-    const stmt = this.db.prepare(
-      "SELECT channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at FROM sandboxes WHERE channel = ? AND identity_id = ? AND peer_id = ?",
-    );
-    const row = stmt.get(channel, identityId, peerId) as SandboxRow | null;
-    return row ?? null;
-  }
-
-  upsertSandbox(channel: ChannelName, identityId: string, peerId: string, sandboxId: string, status: string, hostWorkspacePath: string, hostDataPath: string) {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      `INSERT INTO sandboxes (channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, status = excluded.status, host_workspace_path = excluded.host_workspace_path, host_data_path = excluded.host_data_path, updated_at = excluded.updated_at`,
-    );
-    stmt.run(channel, identityId, peerId, sandboxId, status, hostWorkspacePath, hostDataPath, now, now);
-  }
-
-  deleteSandbox(channel: ChannelName, identityId: string, peerId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM sandboxes WHERE channel = ? AND identity_id = ? AND peer_id = ?");
-    const result = stmt.run(channel, identityId, peerId);
-    return result.changes > 0;
-  }
-
-  listSandboxes(): SandboxRow[] {
-    const stmt = this.db.prepare(
-      "SELECT channel, identity_id, peer_id, sandbox_id, status, host_workspace_path, host_data_path, created_at, updated_at FROM sandboxes ORDER BY updated_at DESC",
-    );
-    return stmt.all() as SandboxRow[];
-  }
-
-  close() {
-    this.db.close();
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }

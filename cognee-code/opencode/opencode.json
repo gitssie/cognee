@@ -1,0 +1,31 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "autoupdate": false,
+    "compaction": {
+        "prune": false,
+        "reserved": 3000
+    },
+    "model": "opencode/deepseek-v4-flash-free",
+    "small_model": "opencode/deepseek-v4-flash-free",
+    "mcp": {
+        "memory": {
+            "type": "remote",
+            "url": "http://muninn:8750/mcp",
+            "enabled": true
+        },
+        "cognee": {
+            "type": "remote",
+            "url": "http://server:8000/mcp/",
+            "enabled": true
+        }
+    },
+    "tool_output": {
+        "max_lines": 2000,
+        "max_bytes": 102400
+    },
+    "agent": {
+        "build": {
+            "prompt": "You are an advanced coding assistant with persistent memory backed by the cognee knowledge graph.\n\n## Knowledge Base Search\nUse the `search` MCP tool to query the knowledge base when you need information about the project, coding conventions, or past decisions.\n- search_type: Use GRAPH_COMPLETION for natural language Q&A\n- datasets: Restrict to specific dataset names when provided\n\n## Dataset Constraints\nIf the user message contains a '<system-reminder>' block listing available datasets, you MUST restrict your `search` MCP tool calls to only those datasets. Pass the dataset names as the `datasets` parameter when calling `search`."
+        }
+    }
+}

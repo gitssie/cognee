@@ -39,7 +39,7 @@ export class BridgeSessionRuntime {
         peerKey: string;
         directory: string;
     }) {
-        const sandboxId = this.deps.store?.getSandbox(input.channel, input.identityId, input.peerKey)?.sandbox_id;
+        const sandboxId = (await this.deps.store?.getSandbox(input.channel, input.identityId, input.peerKey))?.sandbox_id;
         return this.deps.provider.getClientForSession({
             ...input,
             sandboxId: sandboxId ?? undefined,
@@ -68,6 +68,10 @@ export class BridgeSessionRuntime {
         const storedId = input.storedSessionId?.trim();
         if (storedId) {
             const alive = await this.isSessionAlive(handle.client, storedId);
+            this.deps.logger.debug(
+                { channel: input.channel, identityId: input.identityId, sessionID: storedId, alive },
+                "session-resolve: isSessionAlive result",
+            );
             if (alive) return { sessionID: storedId, handle };
             this.deps.logger.warn(
                 { channel: input.channel, identityId: input.identityId, sessionID: storedId },
@@ -93,15 +97,17 @@ export class BridgeSessionRuntime {
         handle: Awaited<ReturnType<typeof this.getHandle>>,
     ): Promise<string> {
         const title = `opencode-router ${input.channel}/${input.identityId} ${input.peerId}`;
-        const session = await handle.client.session.create({
+        const sessionPayload = {
             title,
+            directory: input.directory,
             permission: buildPermissionRules(this.deps.config!.permissionMode),
-        });
+        };
+        const session = await handle.client.session.create(sessionPayload);
         const sessionID =
             (session as { data?: { id?: string } }).data?.id ??
             (session as { id?: string }).id;
         if (!sessionID) throw new Error("Failed to create session");
-        this.deps.store!.upsertSession(
+        await this.deps.store!.upsertSession(
             input.channel,
             input.identityId,
             input.peerKey,
@@ -121,7 +127,7 @@ export class BridgeSessionRuntime {
     async createSession(input: SessionContextInput): Promise<string> {
         if (!this.deps.config || !this.deps.store)
             throw new Error("SessionRuntime config/store are not configured");
-        const existingSession = this.deps.store.getSession(
+        const existingSession = await this.deps.store.getSession(
             input.channel,
             input.identityId,
             input.peerKey,

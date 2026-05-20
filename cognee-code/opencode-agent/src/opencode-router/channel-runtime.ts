@@ -137,12 +137,12 @@ function fileNameFromUrl(url: string): string {
  */
 function resolveOpencodeAgent(cfg: unknown, channel: string, accountId: string): string | undefined {
   const c = cfg as any;
-  const fromAccount = c?.channels?.[channel]?.accounts?.[accountId]?.opencode?.agent as string | undefined;
-  if (fromAccount?.trim()) return fromAccount.trim();
-  const fromTop = c?.opencode?.agent as string | undefined;
-  if (fromTop?.trim()) return fromTop.trim();
-  const fromLegacy = c?.agent?.agentId as string | undefined;
-  if (fromLegacy?.trim()) return fromLegacy.trim();
+  const fromAccount = c?.channels?.[channel]?.accounts?.[accountId]?.opencode?.agent;
+  if (typeof fromAccount === "string" && fromAccount.trim()) return fromAccount.trim();
+  const fromTop = c?.opencode?.agent;
+  if (typeof fromTop === "string" && fromTop.trim()) return fromTop.trim();
+  const fromLegacy = c?.agent?.agentId;
+  if (typeof fromLegacy === "string" && fromLegacy.trim()) return fromLegacy.trim();
   return undefined;
 }
 

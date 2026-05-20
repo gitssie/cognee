@@ -3,7 +3,7 @@
  */
 
 import { OpencodeClient } from "@opencode-ai/sdk/v2";
-import type { SSEListener } from "../sse-listener.js";
+import type { SSEListener, ReactiveSSEListener } from "../sse-listener.js";
 
 /** Session-scoped client handle. */
 export interface ClientHandle {
@@ -11,7 +11,7 @@ export interface ClientHandle {
     directory: string;
     sandboxId?: string;
     /** Shared SSE listener for this client (single connection, fan-out by sessionID). */
-    sseListener: SSEListener;
+    sseListener: SSEListener | ReactiveSSEListener;
     release(): Promise<void>;
 }
 

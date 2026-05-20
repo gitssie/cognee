@@ -442,16 +442,16 @@ bindings
   .option("--channel <channel>", "telegram|slack")
   .option("--identity <id>", "Identity id")
   .description("List bindings")
-  .action((opts: { channel?: string; identity?: string }) => {
+  .action(async (opts: { channel?: string; identity?: string }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    const store = new BridgeStore(config.dbPath);
+    const store = new BridgeStore(config.dbUrl);
     const channelRaw = opts.channel?.trim().toLowerCase();
     const identityId = opts.identity?.trim() ? normalizeIdentityId(opts.identity) : undefined;
     const channel: ChannelName | undefined =
       channelRaw === "telegram" || channelRaw === "slack" ? (channelRaw as ChannelName) : channelRaw ? (outputError("Invalid channel"), undefined) : undefined;
-    const items = store
-      .listBindings({ ...(channel ? { channel } : {}), ...(identityId ? { identityId } : {}) })
+    const items = (await store
+      .listBindings({ ...(channel ? { channel } : {}), ...(identityId ? { identityId } : {}) }))
       .map((b) => ({
         channel: b.channel,
         identityId: b.identity_id,
@@ -459,7 +459,7 @@ bindings
         directory: b.directory,
         updatedAt: b.updated_at,
       }));
-    store.close();
+    await store.close();
     if (useJson) outputJson({ items });
     else for (const item of items) console.log(`${item.channel}/${item.identityId} ${item.peerId} -> ${item.directory}`);
   });
@@ -471,19 +471,19 @@ bindings
   .requiredOption("--peer <peerId>", "Peer id")
   .requiredOption("--dir <directory>", "Directory")
   .description("Set a binding")
-  .action((opts: { channel: string; identity: string; peer: string; dir: string }) => {
+  .action(async (opts: { channel: string; identity: string; peer: string; dir: string }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    const store = new BridgeStore(config.dbPath);
+    const store = new BridgeStore(config.dbUrl);
     const channelRaw = opts.channel.trim().toLowerCase();
     if (channelRaw !== "telegram" && channelRaw !== "slack") outputError("Invalid channel");
     const identityId = normalizeIdentityId(opts.identity);
     const peerId = opts.peer.trim();
     const directory = opts.dir.trim();
     if (!peerId || !directory) outputError("peer and dir are required");
-    store.upsertBinding(channelRaw as ChannelName, identityId, peerId, directory);
-    store.clearSession(channelRaw as ChannelName, identityId, peerId, directory);
-    store.close();
+    await store.upsertBinding(channelRaw as ChannelName, identityId, peerId, directory);
+    await store.clearSession(channelRaw as ChannelName, identityId, peerId, directory);
+    await store.close();
     if (useJson) outputJson({ success: true });
     else console.log("Binding saved.");
   });
@@ -494,17 +494,17 @@ bindings
   .requiredOption("--identity <id>", "Identity id")
   .requiredOption("--peer <peerId>", "Peer id")
   .description("Clear a binding")
-  .action((opts: { channel: string; identity: string; peer: string }) => {
+  .action(async (opts: { channel: string; identity: string; peer: string }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    const store = new BridgeStore(config.dbPath);
+    const store = new BridgeStore(config.dbUrl);
     const channelRaw = opts.channel.trim().toLowerCase();
     if (channelRaw !== "telegram" && channelRaw !== "slack") outputError("Invalid channel");
     const identityId = normalizeIdentityId(opts.identity);
     const peerId = opts.peer.trim();
-    const ok = store.deleteBinding(channelRaw as ChannelName, identityId, peerId);
-    store.clearSession(channelRaw as ChannelName, identityId, peerId);
-    store.close();
+    const ok = await store.deleteBinding(channelRaw as ChannelName, identityId, peerId);
+    await store.clearSession(channelRaw as ChannelName, identityId, peerId);
+    await store.close();
     if (useJson) outputJson({ success: ok });
     else console.log(ok ? "Binding removed." : "Binding not found.");
     process.exit(ok ? 0 : 1);

@@ -19,6 +19,7 @@ from cognee.modules.users.methods import get_user
 vector_db_config = ContextVar("vector_db_config", default=None)
 graph_db_config = ContextVar("graph_db_config", default=None)
 session_user = ContextVar("session_user", default=None)
+global_context_variables = ContextVar("global_context_variables", default={})
 
 
 async def set_session_user_context_variable(user):

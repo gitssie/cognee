@@ -270,7 +270,7 @@ describe("Sandbox.create() — host-mount metadata", () => {
     await manager.ensureRuntime("wecom:default:mountpath-test");
 
     const hostMount = JSON.parse(lastCreateOpts.metadata["host-mount"]);
-    expect(hostMount[0].mountPath).toBe("/home/user");
+    expect(hostMount[0].mountPath).toBe("/workspace");
 
     await manager.shutdown();
   });

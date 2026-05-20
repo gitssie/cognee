@@ -13,8 +13,8 @@ from cognee.modules.users.models import (
     UserTenant,
     UserRole,
     Principal,
-    Dataset,
 )
+from cognee.modules.data.models import Dataset
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.infrastructure.databases.relational import get_relational_engine
 from cognee.api.DTO import OutDTO

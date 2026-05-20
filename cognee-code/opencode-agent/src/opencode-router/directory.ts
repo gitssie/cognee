@@ -71,7 +71,9 @@ export async function provisionPeerDirectory(
     for (const entry of entries) {
       if (!entry.isFile()) continue;
       const src = join(templateDir, entry.name);
-      const dst = join(peerDir, entry.name);
+      // Template files use .txt for import convenience, but are written as .md
+      const dstName = entry.name.replace(/\.txt$/, ".md");
+      const dst = join(peerDir, dstName);
       try {
         await stat(dst);
         // Already exists — preserve user modifications

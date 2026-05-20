@@ -140,11 +140,19 @@ export async function startBridge(
     reporter?: BridgeReporter,
 ) {
     const reportStatus = reporter?.onStatus;
+    const dirWorkspaceRoot = config.mode === "directory"
+        ? config.directory.workspaceRoot
+        : undefined;
     const runtime = await createBridgeRuntime(config, {
-        paths: deps.paths,
+        paths: {
+            ...(dirWorkspaceRoot ? { workspaceRoot: dirWorkspaceRoot } : {}),
+            ...(deps.paths ?? {}),
+        },
         mediaStore: deps.mediaStore,
     });
-    const { workspaceRoot } = runtime.paths;
+    // In directory mode, workspaceRoot comes from config.directory.workspaceRoot (typically /work).
+    // In sandbox mode, workspaceRoot comes from runtime.paths (the router's own workspace directory).
+    const workspaceRoot = dirWorkspaceRoot ?? runtime.paths.workspaceRoot;
     const { mediaStore } = runtime;
 
     const provider = deps.provider;
@@ -158,7 +166,7 @@ export async function startBridge(
             throw new Error("Invalid channel");
         return channel;
     };
-    const store = deps.store ?? new BridgeStore(config.dbPath);
+    const store = deps.store ?? new BridgeStore(config.dbUrl);
     deps.sandboxManager?.setStore(store);
     const pluginHosts = new Map<string, any>();
     const pluginIdentities = new Map<string, Map<string, { id: string; enabled: boolean; directory?: string; fingerprint?: string }>>();
@@ -444,7 +452,7 @@ export async function startBridge(
             for (const adapter of adapters.values()) {
                 await adapter.stop();
             }
-            store.close();
+            await store.close();
             await provider.shutdown();
             await delay(50);
         }

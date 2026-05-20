@@ -113,7 +113,7 @@ export async function loadBridgePluginRegistry(context: BridgePluginContext): Pr
   const candidates = await discoverBridgePluginCandidates(context.config, context.logger);
 
   // Create the shared channel runtime backed by router infrastructure
-  const store = new BridgeStore(context.config.dbPath);
+  const store = new BridgeStore(context.config.dbUrl);
   const channelRuntime = createChannelRuntime({
     config: context.config,
     store,
