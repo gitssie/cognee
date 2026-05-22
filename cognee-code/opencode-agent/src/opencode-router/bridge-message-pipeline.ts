@@ -158,6 +158,10 @@ async function promptStream(params: PromptParams): Promise<void> {
         parts: [{ type: "text" as const, text: promptText }],
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(effectiveModel ? { model: effectiveModel } : {}),
+        tools: {
+            question: false,
+            external_directory: false,
+        },
     };
 
     const t0 = Date.now();
